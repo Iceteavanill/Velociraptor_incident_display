@@ -1,7 +1,7 @@
 # Velociraptor incident display
 
 This project is a PCB that contains a display which tells you the days since the last velociraptor incident. 
-If you want to reproduce this project, check the releases and follow the instructions. 
+If you want to reproduce this project follow the instructions below. 
 
 ![A simple 360 Render of this Project](/pictures/PCB_V3_render.gif)
 Thanks to my anonymous "servo skull" for making this render for me.
