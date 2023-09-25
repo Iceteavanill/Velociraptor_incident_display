@@ -15,7 +15,7 @@ RtcDS1307<TwoWire> Rtc(Wire); //setup for the RTC
 
 //setup for debug
 
-#define DEBUG 1 // In normal use this should be a 0 only set this to a 1 if you want to debug the code
+#define DEBUG 0 // In normal use this should be a 0 only set this to a 1 if you want to debug the code
 
 #if DEBUG == 0
 #define debug(x) Serial.print(x)
