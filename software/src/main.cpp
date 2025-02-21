@@ -2,7 +2,7 @@
 This software was written by Iceteavanill for the Velociraptor Project.
 It is provided as is with no liability for anything this software may or may not be the cause of.
 For more information check the github readme.
-This project uses the RTC library by Michael Miller
+This project uses the RTC library by Michael Miller TODO : add the rest!
 */
 
 //libraries used
@@ -10,64 +10,29 @@ This project uses the RTC library by Michael Miller
 #include <EEPROM.h>
 #include <Wire.h>
 #include <RtcDS1307.h>
+#include <Button.h>
+#include <PinChangeInterrupt.h>
+
+//Timer Setup
+#define USE_TIMER_2 true
+#include <TimerInterrupt.h>
+
+#include "setup.h"
 
 RtcDS1307<TwoWire> Rtc(Wire); //setup for the RTC
 
-//setup for debug
-
-#define DEBUG 0 // In normal use this should be a 0 only set this to a 1 if you want to debug the code
-
-#if DEBUG == 1
-#define debug(x) Serial.print(x)
-#define debugln(x) Serial.println(x)
-#else
-#define debug(x)
-#define debugln(x)
-#endif
-
-//option
-#define allowdisplayoff 0 //if you set this to 1 the display can be fully off when the light level is sufficiently low
-
-//Defining I/O's
-  //Display
-#define dpClear 8
-#define dpData 9
-#define dpOe 6
-#define dpClk 7
-#define dpRclkU4 5 
-#define dpRclkU5 4
-#define dpRclkU6 3
-#define dpRclkU7 2
-#define dplight 10
-  //switches
-#define sSet A3
-#define sInc A2
-#define sDec A1
-  //Photo transistor
-#define aSiglight A0
-
-//I2C Adress of RTC
-#define rtcadress B1101000
-
-//EEpromadresses
-#define EEPROMadrOffset 1 //offsetadress for brighness setting
-#define EEPROMadrScaling 21 //scaling adress for scaling adress
-#define EEPOMadrStarttime 41 //starting day adress
-
-//constants
-const unsigned long debouncetime = 50; //debouunce time in ms  
-
 //global variables
-char displaychar[5] = {'e','r','r',' '}; //initialize string with err in case something goes wrong. This array is for storing the characters that should be displayed. The characters are in order left to right(0 is shown by D2 and 3 is shown by D5)
+char displaychar[] = "err "; //initialize string with err in case something goes wrong. This array is for storing the characters that should be displayed. The characters are in order left to right(0 is shown by D2 and 3 is shown by D5)
 bool displaydot[4] = {false,false,false,false}; // these represent the dots on the 7 segment display (folows the same logic as displaychar)
 
 int brightnessoffset; //offset for led brightness (should be negative, typically it is zero)
 int brightnessscaling; //scaling for brightness (should be between 1 and 10, typically it is 4)
 int brighnessvalprocessed; //sensor reading smoothed (average of 10 readings)
 
-bool switchset = false; //true if the swt switch is pressed (debounced)
-bool switchinc = false; //true if the inc switch is pressed (debounced)
-bool switchdec = false; //true if the dec switch is pressed (debounced)
+Button switchset{sSet}; //buttoninstance for the setswitch
+Button switchinc{sInc}; //buttoninstance for the incswitch
+Button switchdec{sDec}; //buttoninstance for the decswitch
+
 bool buttonpressed = false; // true if any switch is pressed
 bool switchtrig; // used for only using an edge of a button
 
@@ -146,6 +111,10 @@ void setup()
   pinMode(sInc,INPUT);
   pinMode(sDec,INPUT);
   
+  attachPCINT(digitalPinToPCINT(sSet), switchhandler, CHANGE);
+  attachPCINT(digitalPinToPCINT(sInc), switchhandler, CHANGE);
+  attachPCINT(digitalPinToPCINT(sDec), switchhandler, CHANGE);
+
   //read EEPROMvalues for the brighness display and correct unrealistic values
   EEPROM.get(EEPROMadrOffset,brightnessoffset);
 
@@ -256,8 +225,8 @@ void setup()
   updatedisplay();
   delay(500);
 
-
-
+  ITimer2.init();
+  ITimer2.attachInterruptInterval(calltime, setbrightness, 0);
 
   //Init completed
   debugln("------------------- Initialized -------------------");
@@ -266,9 +235,6 @@ void setup()
 //loop
 void loop()
 {
-
-  setbrightness(); //set brightness
-  switchhandler(); //manage switch states
 
 // State Machine : 
 
@@ -331,13 +297,13 @@ void loop()
     {
       switchtrig = false;
     }
-    else if(switchset && !switchtrig)
+    else if(switchset.buttonStatus && !switchtrig)
     {
       switchtrig = true;
       booncestatemachine = false;
       statemachine = state_setup;
     }
-    else if (switchdec && switchinc && !switchtrig)//if both inc and dec are pressed at the same time, a timer of 5 seconds is startet
+    else if (switchdec.buttonStatus && switchinc.buttonStatus && !switchtrig)//if both inc and dec are pressed at the same time, a timer of 5 seconds is startet
     {
 
       if(millis() - timerton >= 5000) // the two switches have to be held 5 seconds
@@ -380,7 +346,7 @@ void loop()
     {
       switchtrig = false;
     }
-    else if (switchdec && switchinc && !switchtrig)//if both inc and dec are pressed at the same time, a timer of 5 seconds is startet
+    else if (switchdec.buttonStatus && switchinc.buttonStatus && !switchtrig)//if both inc and dec are pressed at the same time, a timer of 5 seconds is startet
     {
       if(millis() - timerton >= 5000) // the two switches have to be held 5 seconds
       {
@@ -424,20 +390,20 @@ void loop()
     {
       switchtrig = false;
     }
-    else if(switchinc && !switchtrig)//navigate to the next menu
+    else if(switchinc.buttonStatus && !switchtrig)//navigate to the next menu
     {
       switchtrig = true;
       booncestatemachine = false;
       statemachine = state_setup_Brigtness_menu;
     }
-    else if (switchdec && !switchtrig)//navigate to the previous menu
+    else if (switchdec.buttonStatus && !switchtrig)//navigate to the previous menu
     {
       switchtrig = true;
       booncestatemachine = false;
       statemachine = state_setup_resetcounter_menu;
 
     }
-    else if (switchset && !switchtrig)//navigate to the main menu
+    else if (switchset.buttonStatus && !switchtrig)//navigate to the main menu
     {
       switchtrig = true;
       booncestatemachine = false;
@@ -471,19 +437,19 @@ void loop()
     {
       switchtrig = false;
     }
-    else if(switchinc && !switchtrig)//navigate to the next menu
+    else if(switchinc.buttonStatus && !switchtrig)//navigate to the next menu
     {
       switchtrig = true;
       booncestatemachine = false;
       statemachine = state_setup_Brigtness_Displayvalue_menu;
     }
-    else if (switchdec && !switchtrig)//navigate to the previous menu
+    else if (switchdec.buttonStatus && !switchtrig)//navigate to the previous menu
     {
       switchtrig = true;
       booncestatemachine = false;
       statemachine = state_setup;
     }
-    else if (switchset && !switchtrig)//navigate to the sub menu
+    else if (switchset.buttonStatus && !switchtrig)//navigate to the sub menu
     {
       switchtrig = true;
       booncestatemachine = false;
@@ -515,19 +481,19 @@ void loop()
     {
       switchtrig = false;
     }
-    else if(switchinc && !switchtrig)//navigate to the next menu
+    else if(switchinc.buttonStatus && !switchtrig)//navigate to the next menu
     {
       switchtrig = true;
       booncestatemachine = false;
       statemachine = state_setup_time_menu;
     }
-    else if (switchdec && !switchtrig)//navigate to the previous menu
+    else if (switchdec.buttonStatus && !switchtrig)//navigate to the previous menu
     {
       switchtrig = true;
       booncestatemachine = false;
       statemachine = state_setup_Brigtness_menu;
     }
-    else if (switchset && !switchtrig)//navigate to the sub menu
+    else if (switchset.buttonStatus && !switchtrig)//navigate to the sub menu
     {
       switchtrig = true;
       booncestatemachine = false;
@@ -559,19 +525,19 @@ void loop()
     {
       switchtrig = false;
     }
-    else if(switchinc && !switchtrig)//navigate to the next menu
+    else if(switchinc.buttonStatus && !switchtrig)//navigate to the next menu
     {
       switchtrig = true;
       booncestatemachine = false;
       statemachine = state_setup_time_Display_menu;
     }
-    else if (switchdec && !switchtrig)//navigate to the previous menu
+    else if (switchdec.buttonStatus && !switchtrig)//navigate to the previous menu
     {
       switchtrig = true;
       booncestatemachine = false;
       statemachine = state_setup_Brigtness_Displayvalue_menu;
     }
-    else if (switchset && !switchtrig)//navigate to the sub menu
+    else if (switchset.buttonStatus && !switchtrig)//navigate to the sub menu
     {
       switchtrig = true;
       booncestatemachine = false;
@@ -603,19 +569,19 @@ void loop()
     {
       switchtrig = false;
     }
-    else if(switchinc && !switchtrig)//navigate to the next menu
+    else if(switchinc.buttonStatus && !switchtrig)//navigate to the next menu
     {
       switchtrig = true;
       booncestatemachine = false;
       statemachine = state_setup_resetcounter_menu;
     }
-    else if (switchdec && !switchtrig)//navigate to the previous menu
+    else if (switchdec.buttonStatus && !switchtrig)//navigate to the previous menu
     {
       switchtrig = true;
       booncestatemachine = false;
       statemachine = state_setup_time_menu;
     }
-    else if (switchset && !switchtrig)//navigate to the sub menu
+    else if (switchset.buttonStatus && !switchtrig)//navigate to the sub menu
     {
       switchtrig = true;
       booncestatemachine = false;
@@ -648,19 +614,19 @@ void loop()
       switchtrig = false;
     }
 
-    if(switchinc && !switchtrig)//navigate to the next menu
+    if(switchinc.buttonStatus && !switchtrig)//navigate to the next menu
     {
       switchtrig = true;
       booncestatemachine = false;
       statemachine = state_setup;
     }
-    else if (switchdec && !switchtrig)//navigate to the previous menu
+    else if (switchdec.buttonStatus && !switchtrig)//navigate to the previous menu
     {
       switchtrig = true;
       booncestatemachine = false;
       statemachine = state_setup_time_Display_menu;
     }
-    else if (switchset && !switchtrig)//navigate to the sub menu
+    else if (switchset.buttonStatus && !switchtrig)//navigate to the sub menu
     {
       switchtrig = true;
       booncestatemachine = false;
@@ -697,7 +663,7 @@ void loop()
     {
       switchtrig = false;
     }
-    else if (switchset && !switchtrig)// do step 1 of brighness calibration
+    else if (switchset.buttonStatus && !switchtrig)// do step 1 of brighness calibration
     {
 
       //on the last read write the new value 
@@ -762,7 +728,7 @@ void loop()
     {
       switchtrig = false;
     }
-    else if (switchset && !switchtrig)// do step 2 of brighness calibration
+    else if (switchset.buttonStatus && !switchtrig)// do step 2 of brighness calibration
     {
 
       brightnessscaling =  ((brighnessvalprocessed + brightnessoffset) / 255 ) + 1;
@@ -863,12 +829,12 @@ void loop()
     {
       switchtrig = false;
     }
-    else if(switchinc && !switchtrig)//go to next value
+    else if(switchinc.buttonStatus && !switchtrig)//go to next value
     {
       switchtrig = true;
       whattodisplayBrighness++;
     }
-    else if (switchdec && !switchtrig)//go to last value
+    else if (switchdec.buttonStatus && !switchtrig)//go to last value
     {
       switchtrig = true;
       whattodisplayBrighness--;
@@ -877,7 +843,7 @@ void loop()
         whattodisplayBrighness = 2;
       }
     }
-    else if (switchset && !switchtrig)//go back to the menu
+    else if (switchset.buttonStatus && !switchtrig)//go back to the menu
     {
       switchtrig = true;
       booncestatemachine = false;
@@ -907,7 +873,7 @@ void loop()
     }
 
 
-    if((setupstep !=setupsteplast) || ( switchinc && !switchtrig) || (switchdec && !switchtrig) )
+    if((setupstep !=setupsteplast) || ( switchinc.buttonStatus && !switchtrig) || (switchdec.buttonStatus && !switchtrig) )
     {
       setupsteplast = setupstep;
 
@@ -915,12 +881,12 @@ void loop()
       {
       case 1://set Year
 
-        if (switchinc)
+        if (switchinc.buttonStatus)
         {
           yeartemp++;//increment the temp year
           switchtrig = true;
         }
-        else if(switchdec)
+        else if(switchdec.buttonStatus)
         {
           yeartemp--;//decrement the temp year
           switchtrig = true;
@@ -938,7 +904,7 @@ void loop()
 
       case 2://set Month
 
-        if (switchinc)
+        if (switchinc.buttonStatus)
         {
           monthtemp++;//increment the temp month
           switchtrig = true;
@@ -947,7 +913,7 @@ void loop()
             monthtemp = 1;
           }
         }
-        else if(switchdec)//month clamping
+        else if(switchdec.buttonStatus)//month clamping
         {
           monthtemp--;//decrement the temp month
           switchtrig = true;
@@ -969,12 +935,12 @@ void loop()
 
       case 3://set Day
 
-        if (switchinc)
+        if (switchinc.buttonStatus)
         {
           rtctimecurrent += uint32_t(86400);//increment the time one day
           switchtrig = true;
         }
-        else if(switchdec)
+        else if(switchdec.buttonStatus)
         {
           rtctimecurrent -= 86400;//decrement the time one day
           switchtrig = true;
@@ -992,12 +958,12 @@ void loop()
 
       case 4://set Hour
 
-        if (switchinc)
+        if (switchinc.buttonStatus)
         {
           rtctimecurrent += uint32_t(3600);//increment the time one hour
           switchtrig = true;
         }
-        else if(switchdec)
+        else if(switchdec.buttonStatus)
         {
           rtctimecurrent -= 3600;//decrement the time one hour
           switchtrig = true;
@@ -1015,12 +981,12 @@ void loop()
 
       case 5://set minute
 
-        if (switchinc)
+        if (switchinc.buttonStatus)
         {
           rtctimecurrent += uint32_t(60);//increment the time one minute
           switchtrig = true;
         }
-        else if(switchdec)
+        else if(switchdec.buttonStatus)
         {
           rtctimecurrent -= 60;//decrement the time one minute
           switchtrig = true;
@@ -1039,12 +1005,12 @@ void loop()
       case 6://set Seconds
 
 
-        if (switchinc)
+        if (switchinc.buttonStatus)
         {
           rtctimecurrent += uint32_t(1);//increment the time one Second
           switchtrig = true;
         }
-        else if(switchdec)
+        else if(switchdec.buttonStatus)
         {
           rtctimecurrent -= 1;//decrement the time one Second
           switchtrig = true;
@@ -1107,15 +1073,15 @@ void loop()
     {
       switchtrig = false;
     }
-    else if(switchinc && !switchtrig)
+    else if(switchinc.buttonStatus && !switchtrig)
     {
       switchtrig = true;
     }
-    else if (switchdec && !switchtrig)
+    else if (switchdec.buttonStatus && !switchtrig)
     {
       switchtrig = true;
     }
-    else if (switchset && !switchtrig)
+    else if (switchset.buttonStatus && !switchtrig)
     {
       setupstep = setupstep + 1;
       switchtrig = true;
@@ -1217,12 +1183,12 @@ void loop()
     {
       switchtrig = false;
     }
-    else if(switchinc && !switchtrig)//go to next value
+    else if(switchinc.buttonStatus && !switchtrig)//go to next value
     {
       switchtrig = true;
       whattodisplayTime++;
     }
-    else if (switchdec && !switchtrig)//go to last value
+    else if (switchdec.buttonStatus && !switchtrig)//go to last value
     {
       switchtrig = true;
       whattodisplayTime--;
@@ -1231,7 +1197,7 @@ void loop()
         whattodisplayTime = 5;
       }
     }
-    else if (switchset && !switchtrig)//go back to the menu
+    else if (switchset.buttonStatus && !switchtrig)//go back to the menu
     {
       statemachine = state_setup_time_Display_menu;
       switchtrig = true;
@@ -1264,13 +1230,13 @@ void loop()
       switchtrig = false;
     }
 
-    else if (switchset && !switchtrig)//navigate to the parent menu
+    else if (switchset.buttonStatus && !switchtrig)//navigate to the parent menu
     {
       switchtrig = true;
       booncestatemachine = false;
       statemachine = state_setup;
     }
-    else if (switchdec && switchinc && !switchtrig)//if both inc and dec are pressed at the same time, a timer of 5 seconds is startet
+    else if (switchdec.buttonStatus && switchinc.buttonStatus && !switchtrig)//if both inc and dec are pressed at the same time, a timer of 5 seconds is startet
     {
 
       if(millis() - timerton >= 5000) // the two switches have to be held 5 seconds
@@ -1627,73 +1593,11 @@ void setbrightness()
 //debounce switches
 void switchhandler()
 {
+  switchset.scan();
+  switchinc.scan();
+  switchdec.scan();
 
-  static unsigned long setprevioustime;//time (based on millis) when set was pressed
-  static unsigned long incprevioustime;//time (based on millis) when inc was pressed
-  static unsigned long decprevioustime;//time (based on millis) when dec was pressed
-
-  bool switchsetread = digitalRead(sSet);
-  bool Switchincread = digitalRead(sInc);
-  bool Switchdecread = digitalRead(sDec);
-
-  //debounce Set
-  if(switchsetread != switchset)// check for change in Button state
-  {
-    if(((millis() - setprevioustime) >= debouncetime)) //wait for debouncetime to pass
-    {
-      switchset = switchsetread;//update switchflag
-      setprevioustime = millis();
-
-      debug("Switchset was set to : ");
-      debug(switchset);
-      debug(" at time : ");
-      debugln(millis());
-    }
-  }
-  else
-  {
-    setprevioustime = millis(); //update setprevioustime to current time
-  }
-
-  //debounce inc
-  if(Switchincread != switchinc)// check for change in Button state
-  {
-    if(((millis() - incprevioustime) >= debouncetime)) //wait for debouncetime to pass
-    {
-      switchinc = Switchincread;//update switchflag
-      incprevioustime = millis();
-
-      debug("switchinc was set to : ");
-      debug(switchinc);
-      debug(" at time : ");
-      debugln(millis());
-    }
-  }
-  else
-  {
-    incprevioustime = millis(); //update incprevioustime to current time
-  }
-
-  //debounce dec
-  if(Switchdecread != switchdec)// check for change in Button state
-  {
-    if(((millis() - decprevioustime) >= debouncetime)) //wait for debouncetime to pass
-    {
-      switchdec = Switchdecread;//update switchflag
-      decprevioustime = millis();
-
-      debug("switchdec was set to : ");
-      debug(switchdec);
-      debug(" at time : ");
-      debugln(millis());
-    }
-  }
-  else
-  {
-    decprevioustime = millis(); //update decprevioustime to current time
-  }
-
-  buttonpressed = switchset || switchdec || switchinc;
+  buttonpressed = switchset.buttonStatus || switchinc.buttonStatus || switchdec.buttonStatus;
 }
 
 #if DEBUG == 1 //this function is only used for debuging
