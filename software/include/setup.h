@@ -44,7 +44,7 @@ constexpr auto EEPROMadrOffset = 1;    // offsetadress for brighness setting
 constexpr auto EEPROMadrScaling = 21;  // scaling adress for scaling adress
 constexpr auto EEPOMadrStarttime = 41; // starting day adress
 
-//timerintervall for 
+// timerintervall for
 
 constexpr auto calltime = 50L;
 

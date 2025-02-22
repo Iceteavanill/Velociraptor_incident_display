@@ -7,12 +7,14 @@ This project uses the RTC library by Michael Miller TODO : add the rest!
 
 //libraries used
 #include <Arduino.h>
+#include <string.h>
+#include <math.h>
 #include <EEPROM.h>
 #include <Wire.h>
 #include <RtcDS1307.h>
 #include <Button.h>
 #include <PinChangeInterrupt.h>
-
+// #include "avr8-stub.h"
 
 //Timer Setup
 #define USE_TIMER_2 true
@@ -23,9 +25,6 @@ This project uses the RTC library by Michael Miller TODO : add the rest!
 RtcDS1307<TwoWire> Rtc(Wire); //setup for the RTC
 
 //global variables
-char displayString[] = "err "; //initialize string with err in case something goes wrong. This array is for storing the characters that should be displayed. The characters are in order left to right(0 is shown by D2 and 3 is shown by D5)
-bool displaydot[] = {false,false,false,false}; // these represent the dots on the 7 segment display (folows the same logic as displaychar)
-
 int brightnessoffset; //offset for led brightness (should be negative, typically it is zero)
 int brightnessscaling; //scaling for brightness (should be between 1 and 10, typically it is 4)
 int brighnessvalprocessed; //sensor reading smoothed (average of 10 readings)
@@ -41,8 +40,8 @@ unsigned long timerton; //timer that can be used to create a simple timer no mat
 
 bool booncestatemachine; // used to execute functions only once when the state machine switchse state
 
-//enumerator of the different sates that the menu can be
-enum systemstate 
+//enumerator of the different states that the menu can be
+enum systemstate
 {
   state_noinit,                             // 00 : The state machine has not been set and sets some variables and steps to the next step
   state_fault,                              // 01 : A error has occured and the user has to be informed
@@ -72,7 +71,7 @@ RtcDateTime rtctimeVfree = RtcDateTime(__DATE__, __TIME__); //init RTC time obje
 */
 
 //functions
-void updatedisplay();//manages the displaying of characters
+void updatedisplay(const char* updateString, byte updateDots);//manages the displaying of characters
 void setbrightness();//smooths the sensor valus and set brightness for the display
 void switchhandler();//inputs from the switches and debounces them
 void calcdisplaydefault(bool reload); //calculate the default display
@@ -84,7 +83,7 @@ void calcdisplaydefault(bool reload); //calculate the default display
 //Setup
 void setup() 
 {
-
+  // debug_init(); 
   delay(500); //give everything time to power up
 
   #if DEBUG == 1 //setup serial for debug
@@ -211,16 +210,8 @@ void setup()
   }
 
   //set every segment to true to make a display test
-  displayString[0] = '8';
-  displayString[1] = '8';
-  displayString[2] = '8';
-  displayString[3] = '8';
-  displaydot[0] = true;
-  displaydot[1] = true;
-  displaydot[2] = true;
-  displaydot[3] = true;
-  updatedisplay();
-  delay(500);
+  updatedisplay("8888", B00001111);
+  delay(500); // give time to observe display defects
 
   ITimer2.init();
   ITimer2.attachInterruptInterval(calltime, setbrightness, 0);
@@ -276,13 +267,8 @@ void loop()
 
     if(!booncestatemachine)
     {
-      displaydot[0] = false;
-      displaydot[1] = false;
-      displaydot[2] = false;
-      displaydot[3] = true;
       booncestatemachine = true;
       calcdisplaydefault(true);
-
     }
     else
     {
@@ -299,10 +285,8 @@ void loop()
 
       if(millis() - timerton >= 5000) // the two switches have to be held 5 seconds
       {
-
       booncestatemachine = false;
       statemachine = state_locked;
-
       }     
     }
     else //reset timer
@@ -318,13 +302,8 @@ void loop()
 
     if(!booncestatemachine)
     {      
-      displaydot[0] = false;
-      displaydot[1] = false;
-      displaydot[2] = false;
-      displaydot[3] = false;
       booncestatemachine = true;
       calcdisplaydefault(true);
-
     }
     else
     {
@@ -357,17 +336,8 @@ void loop()
 
     if(!booncestatemachine)
     {
-
       booncestatemachine = true;
-      displayString[0] = 's';
-      displayString[1] = 'e';
-      displayString[2] = 't';
-      displayString[3] = ' ';
-      displaydot[0] = true;
-      displaydot[1] = true;
-      displaydot[2] = true;
-      displaydot[3] = true;
-      updatedisplay();
+      updatedisplay("set ", B00001111);
     }
     if(switchinc.trigger())//navigate to the next menu
     {
@@ -398,15 +368,7 @@ void loop()
     if(!booncestatemachine)
     {
       booncestatemachine = true;
-      displayString[0] = 'a';
-      displayString[1] = 'm';
-      displayString[2] = 'b';
-      displayString[3] = 'l';
-      displaydot[0] = true;
-      displaydot[1] = false;
-      displaydot[2] = false;
-      displaydot[3] = false;
-      updatedisplay();
+      updatedisplay("ambl", B00001000);
     }
 
     if(switchinc.trigger())//navigate to the next menu
@@ -435,15 +397,7 @@ void loop()
     if(!booncestatemachine)
     {
       booncestatemachine = true;
-      displayString[0] = 'a';
-      displayString[1] = 'm';
-      displayString[2] = 'b';
-      displayString[3] = '?';
-      displaydot[0] = false;
-      displaydot[1] = true;
-      displaydot[2] = false;
-      displaydot[3] = false;
-      updatedisplay();
+      updatedisplay("amb?", B00000100);
     }
 
     if(switchinc.trigger())//navigate to the next menu
@@ -472,15 +426,7 @@ void loop()
     if(!booncestatemachine)
     {
       booncestatemachine = true;
-      displayString[0] = 't';
-      displayString[1] = 'i';
-      displayString[2] = 'm';
-      displayString[3] = 'e';
-      displaydot[0] = false;
-      displaydot[1] = false;
-      displaydot[2] = true;
-      displaydot[3] = false;
-      updatedisplay();
+      updatedisplay("time", B00000010);
     }
 
     if(switchinc.trigger())//navigate to the next menu
@@ -509,15 +455,7 @@ void loop()
     if(booncestatemachine == false)
     {
       booncestatemachine = true;
-      displayString[0] = 't';
-      displayString[1] = 'i';
-      displayString[2] = 'm';
-      displayString[3] = '?';
-      displaydot[0] = false;
-      displaydot[1] = false;
-      displaydot[2] = false;
-      displaydot[3] = true;
-      updatedisplay();
+      updatedisplay("tim?", B00000001);
     }
 
     if(switchinc.trigger())//navigate to the next menu
@@ -546,15 +484,7 @@ void loop()
      if(booncestatemachine == false)
     {
       booncestatemachine = true;
-      displayString[0] = 'r';
-      displayString[1] = 'e';
-      displayString[2] = 's';
-      displayString[3] = '?';
-      displaydot[0] = true;
-      displaydot[1] = false;
-      displaydot[2] = false;
-      displaydot[3] = true;
-      updatedisplay();
+      updatedisplay("res?", B00001001);
     }
 
     if(switchinc.trigger())//navigate to the next menu
@@ -588,15 +518,7 @@ void loop()
     if(booncestatemachine == false)
     {
       booncestatemachine = true;
-      displayString[0] = 's';
-      displayString[1] = 't';
-      displayString[2] = 'p';
-      displayString[3] = '1';
-      displaydot[0] = true;
-      displaydot[1] = true;
-      displaydot[2] = false;
-      displaydot[3] = false;
-      updatedisplay();
+      updatedisplay("stp1", B00001100);
     }
 
     if (switchset.trigger())// do step 1 of brighness calibration
@@ -647,15 +569,7 @@ void loop()
     if(booncestatemachine == false)
     {
       booncestatemachine = true;
-      displayString[0] = 's';
-      displayString[1] = 't';
-      displayString[2] = 'p';
-      displayString[3] = '2';
-      displaydot[0] = true;
-      displaydot[1] = true;
-      displaydot[2] = true;
-      displaydot[3] = true;
-      updatedisplay();
+      updatedisplay("stp2", B00001111);
     }
 
     if (switchset.trigger())// do step 2 of brighness calibration
@@ -710,47 +624,29 @@ void loop()
     if((whattodisplayBrighness != whattodisplayBrighnesslast) || (whattodisplayBrighness == 0))
     {
       whattodisplayBrighnesslast = whattodisplayBrighness;
-
+      char tmpString[] = "0000";
+      byte tmpByte;
       switch (whattodisplayBrighness)
       {
       case 0: //display current light sensor
+        sprintf(tmpString, "%4d", brighnessvalprocessed % 10000);
+        tmpByte = B00001000;
+        break;
 
-        displayString[0] = char(brighnessvalprocessed/1000 %10) + '0';  
-        displayString[1] = char(brighnessvalprocessed/100 %10) + '0';  
-        displayString[2] = char(brighnessvalprocessed/10 %10) + '0';  
-        displayString[3] = char(brighnessvalprocessed/1 %10) + '0';  
-        displaydot[0] = true;
-        displaydot[1] = false;
-        displaydot[2] = false;
-        displaydot[3] = false;
-        break;   
-
-      case 1://displa offset
-        displayString[0] = char(abs(brightnessoffset) /1000 %10) + '0';  
-        displayString[1] = char(abs(brightnessoffset) /100 %10) + '0';  
-        displayString[2] = char(abs(brightnessoffset) /10 %10) + '0';  
-        displayString[3] = char(abs(brightnessoffset) /1 %10) + '0';  
-        displaydot[0] = false;
-        displaydot[1] = true;
-        displaydot[2] = false;
-        displaydot[3] = false;
+      case 1://display offset
+        sprintf(tmpString, "%4d", brightnessoffset % 10000);
+        tmpByte = B00000100;
         break;
       case 2://display scaling
-        displayString[0] = char(brightnessscaling /1000 %10) + '0';  
-        displayString[1] = char(brightnessscaling /100 %10) + '0';  
-        displayString[2] = char(brightnessscaling /10 %10) + '0';  
-        displayString[3] = char(brightnessscaling /1 %10) + '0';  
-        displaydot[0] = false;
-        displaydot[1] = false;
-        displaydot[2] = true;
-        displaydot[3] = false;
+        sprintf(tmpString, "%4d", brightnessscaling % 10000);
+        tmpByte = B00000010;
         break;
       default:
         whattodisplayBrighness = 0;
         whattodisplayBrighnesslast = 1;
         break;
       }
-      updatedisplay();
+      updatedisplay(tmpString, tmpByte);
     }
 
     if(switchinc.trigger())//go to next value
@@ -765,7 +661,7 @@ void loop()
         whattodisplayBrighness = 2;
       }
     }
-    else if (switchset.trigger())//go back to the menu
+    if (switchset.trigger())//go back to the menu
     {
       booncestatemachine = false;
       statemachine = state_setup_Brigtness_Displayvalue_menu;
@@ -797,6 +693,8 @@ void loop()
     if((setupstep !=setupsteplast) || ( switchinc.trigger()) || (switchdec.trigger()) )
     {
       setupsteplast = setupstep;
+      char tmpString[] = "0000";
+      byte tmpByte;
 
       switch (setupstep)
       {
@@ -810,15 +708,8 @@ void loop()
         {
           yeartemp--;//decrement the temp year
         }
-
-        displayString[0] = char(yeartemp /1000 %10) + '0';
-        displayString[1] = char(yeartemp /100 %10) + '0';
-        displayString[2] = char(yeartemp /10 %10) + '0';
-        displayString[3] = char(yeartemp /1 %10) + '0';
-        displaydot[0] = true;
-        displaydot[1] = true;
-        displaydot[2] = true;
-        displaydot[3] = true;
+        sprintf(tmpString, "%4d", yeartemp % 10000);
+        tmpByte = B00001111;
         break;
 
       case 2://set Month
@@ -839,15 +730,8 @@ void loop()
             monthtemp = 12;
           }
         }
-
-        displayString[0] = char(monthtemp /10 %10) + '0';
-        displayString[1] = char(monthtemp /1 %10) + '0';
-        displayString[2] = 'm';
-        displayString[3] = 'm';
-        displaydot[0] = true;
-        displaydot[1] = true;
-        displaydot[2] = false;
-        displaydot[3] = false;
+        sprintf(tmpString, "%2dmm", monthtemp % 100);
+        tmpByte = B00001100;
         break;
 
       case 3://set Day
@@ -860,15 +744,8 @@ void loop()
         {
           rtctimecurrent -= 86400;//decrement the time one day
         }
-        
-        displayString[0] = 'd';
-        displayString[1] = 'd';
-        displayString[2] = char( rtctimecurrent.Day() /10 %10) + '0';
-        displayString[3] = char( rtctimecurrent.Day() /1 %10) + '0';
-        displaydot[0] = false;
-        displaydot[1] = false;
-        displaydot[2] = true;
-        displaydot[3] = true;
+        sprintf(tmpString, "dd%2d", rtctimecurrent.Day() % 100);
+        tmpByte = B00000011;
         break;
 
       case 4://set Hour
@@ -881,15 +758,8 @@ void loop()
         {
           rtctimecurrent -= 3600;//decrement the time one hour
         }
-
-        displayString[0] = char(rtctimecurrent.Hour() /10 %10) + '0';
-        displayString[1] = char(rtctimecurrent.Hour() /1 %10) + '0';
-        displayString[2] = 'h';
-        displayString[3] = 'h';
-        displaydot[0] = true;
-        displaydot[1] = true;
-        displaydot[2] = false;
-        displaydot[3] = false;
+        sprintf(tmpString, "%2dhh", rtctimecurrent.Hour() % 100);
+        tmpByte = B00001100;
         break;
 
       case 5://set minute
@@ -902,15 +772,8 @@ void loop()
         {
           rtctimecurrent -= 60;//decrement the time one minute
         }
-
-        displayString[0] = 'm';
-        displayString[1] = 'm';
-        displayString[2] = char( rtctimecurrent.Minute() /10 %10) + '0';
-        displayString[3] = char( rtctimecurrent.Minute() /1 %10) + '0';
-        displaydot[0] = false;
-        displaydot[1] = false;
-        displaydot[2] = true;
-        displaydot[3] = true;
+        sprintf(tmpString, "mm%2d", rtctimecurrent.Minute() % 100);
+        tmpByte = B00000011;
         break;
 
       case 6://set Seconds
@@ -924,15 +787,8 @@ void loop()
         {
           rtctimecurrent -= 1;//decrement the time one Second
         }
-
-        displayString[0] = char( rtctimecurrent.Second() /10 %10) + '0';
-        displayString[1] = char( rtctimecurrent.Second() /1 %10) + '0';
-        displayString[2] = 's';
-        displayString[3] = 's';
-        displaydot[0] = true;
-        displaydot[1] = true;
-        displaydot[2] = false;
-        displaydot[3] = false;
+        sprintf(tmpString, "ss%2d", rtctimecurrent.Second() % 100);
+        tmpByte = B00001100;
         break;
 
       case 7:// write time and go to menu
@@ -973,7 +829,7 @@ void loop()
         break;
       }
 
-      updatedisplay();
+      updatedisplay(tmpString, tmpByte);
       debug("current Time setting step : ");
       debugln(setupstep);
     }
@@ -1004,75 +860,40 @@ void loop()
     {
       rtctimecurrent = Rtc.GetDateTime();
       whattodisplayTimelast = whattodisplayTime;
-
+      char tmpString[] = "0000";
+      byte tmpByte;
       switch (whattodisplayTime)
       {
       case 0: //display Year
-        displayString[0] = char(rtctimecurrent.Year() /1000 %10) + '0';  
-        displayString[1] = char(rtctimecurrent.Year() /100 %10) + '0';  
-        displayString[2] = char(rtctimecurrent.Year() /10 %10) + '0';  
-        displayString[3] = char(rtctimecurrent.Year() /1 %10) + '0';  
-        displaydot[0] = true;
-        displaydot[1] = false;
-        displaydot[2] = false;
-        displaydot[3] = false;
+        sprintf(tmpString, "%4d", rtctimecurrent.Year() % 10000);
+        tmpByte = B00001000;
         break;   
       case 1://display month
-        displayString[0] = 'm';  
-        displayString[1] = 'm';  
-        displayString[2] = char(rtctimecurrent.Month() /10 %10) + '0';  
-        displayString[3] = char(rtctimecurrent.Month() /1 %10) + '0';  
-        displaydot[0] = false;
-        displaydot[1] = true;
-        displaydot[2] = false;
-        displaydot[3] = false;
+        sprintf(tmpString, "mm%2d", rtctimecurrent.Month() % 100);
+        tmpByte = B00000010;
         break;
       case 2://display day
-        displayString[0] = 'd';  
-        displayString[1] = 'd';  
-        displayString[2] = char(rtctimecurrent.Day() /10 %10) + '0';  
-        displayString[3] = char(rtctimecurrent.Day() /1 %10) + '0';  
-        displaydot[0] = false;
-        displaydot[1] = false;
-        displaydot[2] = true;
-        displaydot[3] = false;
+        sprintf(tmpString, "dd%2d", rtctimecurrent.Day() % 100);
+        tmpByte = B00000100;
         break;
       case 3://display hour
-        displayString[0] = 'h';  
-        displayString[1] = 'h';  
-        displayString[2] = char(rtctimecurrent.Hour() /10 %10) + '0';  
-        displayString[3] = char(rtctimecurrent.Hour() /1 %10) + '0';  
-        displaydot[0] = false;
-        displaydot[1] = false;
-        displaydot[2] = false;
-        displaydot[3] = true;
+        sprintf(tmpString, "hh%2d", rtctimecurrent.Hour() % 100);
+        tmpByte = B00000010;
         break;
       case 4://display minutes
-        displayString[0] = 'm';  
-        displayString[1] = 'm';  
-        displayString[2] = char(rtctimecurrent.Minute() /10 %10) + '0';  
-        displayString[3] = char(rtctimecurrent.Minute() /1 %10) + '0';  
-        displaydot[0] = true;
-        displaydot[1] = true;
-        displaydot[2] = false;
-        displaydot[3] = false;
+        sprintf(tmpString, "mm%2d", rtctimecurrent.Minute() % 100);
+        tmpByte = B00001100;
         break;
       case 5://display seconds
-        displayString[0] = 's';  
-        displayString[1] = 's';  
-        displayString[2] = char(rtctimecurrent.Second() /10 %10) + '0';  
-        displayString[3] = char(rtctimecurrent.Second() /1 %10) + '0';  
-        displaydot[0] = true;
-        displaydot[1] = true;
-        displaydot[2] = true;
-        displaydot[3] = false;
+        sprintf(tmpString, "ss%2d", rtctimecurrent.Second() % 100);
+        tmpByte = B00001110;
         break;
       default:
         whattodisplayTime = 0;
         whattodisplayTimelast = 1;
         break;
       }
-      updatedisplay();
+      updatedisplay(tmpString, tmpByte);
     }
 
     else if(switchinc.trigger())//go to next value
@@ -1103,15 +924,7 @@ void loop()
      if(booncestatemachine == false)
     {
       booncestatemachine = true;
-      displayString[0] = 's';
-      displayString[1] = 'u';
-      displayString[2] = 'r';
-      displayString[3] = 'e';
-      displaydot[0] = true;
-      displaydot[1] = true;
-      displaydot[2] = true;
-      displaydot[3] = true;
-      updatedisplay();
+      updatedisplay("sure", B00001111);
     }
 
     if (switchset.trigger())//navigate to the parent menu
@@ -1167,15 +980,7 @@ void loop()
       timerton = millis();
       lasterror = 0;
       alldisplayed = false;
-      displayString[0] = 'e';  
-      displayString[1] = 'r';  
-      displayString[2] = 'r';  
-      displayString[3] = ' ';  
-      displaydot[0] = false;
-      displaydot[1] = false;
-      displaydot[2] = false;
-      displaydot[3] = true;
-      updatedisplay();
+      updatedisplay("err ", B00000001);
   
     }
 
@@ -1185,6 +990,7 @@ void loop()
       debug("What is going on with all displayed : ");
       debugln(alldisplayed);
       timerton = millis();
+      char tmpStr[] = "0000";
       for (byte i = 1; i <= 6; i++)//run through all the errors 
       {
         debug("for states : ");
@@ -1194,7 +1000,7 @@ void loop()
         if (((errorworkingvalue & B00000001) == B00000001) && (i > lasterror))// check if the error bit was set or the error was already displayed
         {
           lasterror = i;
-          displayString[3] = char(lasterror) + '0';  
+          sprintf(tmpStr,"err%d", lasterror % 10);
           break;
         }
 
@@ -1204,7 +1010,7 @@ void loop()
         }
         errorworkingvalue = errorworkingvalue>>1;
       }
-      updatedisplay();
+      updatedisplay(tmpStr, B00000000);
     }
 
     if(alldisplayed && !erroroccurednorecovery)//When every error has been displayed and the error is recoverable, go to normal operation. If not a reset is needed
@@ -1215,11 +1021,7 @@ void loop()
     }
     else if(alldisplayed && erroroccurednorecovery)
     {
-      displayString[0] = 'e';  
-      displayString[1] = 'r';  
-      displayString[2] = 'r';  
-      displayString[3] = 'f';
-      updatedisplay();  
+      updatedisplay("errf", B00000000);  
     }
   }
     break;
@@ -1238,7 +1040,7 @@ void loop()
 }
 
 //Updating the Display with new data
-void updatedisplay()
+void updatedisplay(const char* updateString, byte updateDots)
 { 
   /*
 
@@ -1276,13 +1078,18 @@ void updatedisplay()
 
   debugln("Display update ------------");
   debug("string written to registers : ");
-  debugln(displayString);
+  debugln(updateString);
   
+  int len = 0;
+  for(;updateString[len] != '\0' ;len++);
 
-  for (int i = 0; i <= 3; i++)
+  debug("Strlen is: ");
+  debugln(len);
+  len--;
+  for (;len>= 0;len--)
   {
   
-   switch (displayString[3-i])
+   switch (updateString[len])
    {
     case '0':
       dataforshift = B11011110;
@@ -1379,15 +1186,15 @@ void updatedisplay()
       break;
     }
 
-    if(displaydot[3-i])
+    if((updateDots >> len) & 1)
     {
-      dataforshift = dataforshift | B00000001;
+      dataforshift |= B00000001;
     }
 
     shiftOut(dpData,dpClk,MSBFIRST,dataforshift);
 
     debug("Byte ");
-    debug(3-i);
+    debug(len);
     debug(" : ");
     #if DEBUG == 1
       Serial.println(dataforshift,BIN);
@@ -1524,44 +1331,13 @@ void calcdisplaydefault(bool reload) //calculate the default display
 
   if((dayspassed != dayspassedlast) || reload)
   {
-
     reload = false;
-    bool numberhere = false;
     debugln("displaying days passed");
     dayspassedlast = dayspassed;
 
-    if(((dayspassed / 1000  % 10 ) == 0) && !numberhere)
-    {
-      displayString[0] = ' ';
-    }
-    else
-    {
-      numberhere = true;
-      displayString[0] = char(dayspassed / 1000  % 10) + '0';
-    }
+    char tmpString[] = "    ";
 
-    if(((dayspassed / 100  % 10 ) == 0) && !numberhere)
-    {
-      displayString[1] = ' ';
-    }
-    else
-    {
-      numberhere = true;
-      displayString[1] = char(dayspassed / 100  % 10) + '0';
-    }
-
-    if(((dayspassed / 10  % 10 ) == 0) && !numberhere)
-    {
-      displayString[2] = ' ';
-    }
-    else
-    {
-      numberhere = true;
-      displayString[2] = char(dayspassed / 10  % 10) + '0';
-    }
-
-    displayString[3] = char(dayspassed / 1  % 10) + '0';
-
-    updatedisplay();
+    sprintf(tmpString, "%4d", dayspassed % 10000);
+    updatedisplay(tmpString, statemachine == state_locked?0:B00001000);
   } 
 }

@@ -2,7 +2,6 @@
 #define BUTTON_h
 
 #include <Arduino.h>
-
 constexpr long debouncetime = 50; // debouunce time in ms
 
 /**

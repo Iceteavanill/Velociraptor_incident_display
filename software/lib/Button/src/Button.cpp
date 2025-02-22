@@ -14,7 +14,6 @@ void Button::scan()
     {
         if (((millis() - milliTime) >= debouncetime)) // wait for bounceTime to pass
         {
-
             buttonStatus = switchRead; // update switchstate
             milliTime = millis();
         }
@@ -30,13 +29,13 @@ void Button::scan()
 bool Button::trigger()
 {
 
-    if (wasTriggered && buttonStatus)
+    if (wasTriggered || !buttonStatus)
     {
         return false;
     }
     else
     {
         wasTriggered = true;
-        return true;
+        return buttonStatus;
     }
 }
