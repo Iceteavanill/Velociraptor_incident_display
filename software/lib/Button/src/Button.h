@@ -22,10 +22,17 @@ public:
      **/
     void scan();
 
+    /**
+     * @brief returns a buttonpush only once after a button has been pushed.
+     * Resets after the button has been depressed
+     */
+    bool trigger();
+
 private:
     unsigned int hardwareAdress; // hardware adress to the button
     unsigned long milliTime;
     unsigned long milliTimePrev;
+    bool wasTriggered;
 };
 
 #endif

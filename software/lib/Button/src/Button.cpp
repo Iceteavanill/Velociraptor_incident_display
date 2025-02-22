@@ -23,4 +23,20 @@ void Button::scan()
     {
         milliTime = millis(); // update milliTime to current time
     }
+
+    wasTriggered &= buttonStatus; // reset wasTriggered once the button is depressed
+}
+
+bool Button::trigger()
+{
+
+    if (wasTriggered && buttonStatus)
+    {
+        return false;
+    }
+    else
+    {
+        wasTriggered = true;
+        return true;
+    }
 }
