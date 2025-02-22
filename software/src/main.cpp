@@ -5,7 +5,7 @@ For more information check the github readme.
 This project uses the RTC library by Michael Miller TODO : add the rest!
 */
 
-//libraries used
+// libraries used
 #include <Arduino.h>
 #include <string.h>
 #include <math.h>
@@ -16,174 +16,172 @@ This project uses the RTC library by Michael Miller TODO : add the rest!
 #include <PinChangeInterrupt.h>
 // #include "avr8-stub.h"
 
-//Timer Setup
+// Timer Setup
 #define USE_TIMER_2 true
 #include <TimerInterrupt.h>
 
 #include "setup.h"
 
-RtcDS1307<TwoWire> Rtc(Wire); //setup for the RTC
+RtcDS1307<TwoWire> Rtc(Wire); // setup for the RTC
 
-//global variables
-int brightnessoffset; //offset for led brightness (should be negative, typically it is zero)
-int brightnessscaling; //scaling for brightness (should be between 1 and 10, typically it is 4)
-int brighnessvalprocessed; //sensor reading smoothed (average of 10 readings)
+// global variables
+int brightnessoffset;      // offset for led brightness (should be negative, typically it is zero)
+int brightnessscaling;     // scaling for brightness (should be between 1 and 10, typically it is 4)
+int brighnessvalprocessed; // sensor reading smoothed (average of 10 readings)
 
-Button switchset{sSet}; //buttoninstance for the setswitch
-Button switchinc{sInc}; //buttoninstance for the incswitch
-Button switchdec{sDec}; //buttoninstance for the decswitch
+Button switchset{sSet}; // buttoninstance for the setswitch
+Button switchinc{sInc}; // buttoninstance for the incswitch
+Button switchdec{sDec}; // buttoninstance for the decswitch
 
 bool erroroccurednorecovery = false; // true if an error has occured that cant be recovered This flag needs a powercycle to reset
-byte errorcode = 0; //contains a error code if one is triggered
+byte errorcode = 0;                  // contains a error code if one is triggered
 
-unsigned long timerton; //timer that can be used to create a simple timer no matter what time the RTC is
+unsigned long timerton; // timer that can be used to create a simple timer no matter what time the RTC is
 
 bool booncestatemachine; // used to execute functions only once when the state machine switchse state
 
-//enumerator of the different states that the menu can be
+// enumerator of the different states that the menu can be
 enum systemstate
 {
-  state_noinit,                             // 00 : The state machine has not been set and sets some variables and steps to the next step
-  state_fault,                              // 01 : A error has occured and the user has to be informed
-  state_default,                            // 02 : the menu is in its default state of displaying passed days with unlocked switches
-  state_locked,                             // 03 : the menu is in its default state of displaying passed days with locked switches
-  state_setup,                              // 04 : the menu is in the setup mode and the setting can be selected that want to be changed
-  state_setup_Brigtness_menu,               // 05 : setupmenu for setting the light menu
-  state_setup_Brigtness_Displayvalue_menu,  // 06 : displaying the values asociated with the Brighness setting
-  state_setup_Brigtness_Displayvalue_exec,  // 07 : displaying the values asociated with the Brighness setting
-  state_setup_Brigtness_1,                  // 08 : step 1 in brightness calibration (determine zero offset)
-  state_setup_Brigtness_2,                  // 09 : step 2 in brightness calibration (determin scaling factor)
-  state_setup_time_menu,                    // 10 : setupmenu for setting the time
-  state_setup_time_set,                     // 11 : setting the time
-  state_setup_time_Display_menu,            // 12 : dislay the time menu option
-  state_setup_time_Display_exec,            // 13 : dislay the time
-  state_setup_resetcounter_menu,            // 14 : setupmenu for resetting the counter
-  state_setup_resetcounter_reask            // 15 : Ask for confirmation to reset counter
+  state_noinit,                            // 00 : The state machine has not been set and sets some variables and steps to the next step
+  state_fault,                             // 01 : A error has occured and the user has to be informed
+  state_default,                           // 02 : the menu is in its default state of displaying passed days with unlocked switches
+  state_locked,                            // 03 : the menu is in its default state of displaying passed days with locked switches
+  state_setup,                             // 04 : the menu is in the setup mode and the setting can be selected that want to be changed
+  state_setup_Brigtness_menu,              // 05 : setupmenu for setting the light menu
+  state_setup_Brigtness_Displayvalue_menu, // 06 : displaying the values asociated with the Brighness setting
+  state_setup_Brigtness_Displayvalue_exec, // 07 : displaying the values asociated with the Brighness setting
+  state_setup_Brigtness_1,                 // 08 : step 1 in brightness calibration (determine zero offset)
+  state_setup_Brigtness_2,                 // 09 : step 2 in brightness calibration (determin scaling factor)
+  state_setup_time_menu,                   // 10 : setupmenu for setting the time
+  state_setup_time_set,                    // 11 : setting the time
+  state_setup_time_Display_menu,           // 12 : dislay the time menu option
+  state_setup_time_Display_exec,           // 13 : dislay the time
+  state_setup_resetcounter_menu,           // 14 : setupmenu for resetting the counter
+  state_setup_resetcounter_reask           // 15 : Ask for confirmation to reset counter
 };
 
-systemstate statemachine;//system state
+systemstate statemachine; // system state
 
-RtcDateTime rtctimecurrent = RtcDateTime(__DATE__, __TIME__); //init RTC time object with Compile time. This object contains the most recent time of the RTC
-RtcDateTime rtctimeVfree = RtcDateTime(__DATE__, __TIME__); //init RTC time object with Compile time. This object contains the last time a velociraptor incident has happened
+RtcDateTime rtctimecurrent = RtcDateTime(__DATE__, __TIME__); // init RTC time object with Compile time. This object contains the most recent time of the RTC
+RtcDateTime rtctimeVfree = RtcDateTime(__DATE__, __TIME__);   // init RTC time object with Compile time. This object contains the last time a velociraptor incident has happened
 
 /*
  RTC reference https://github.com/Makuna/Rtc/wiki
 */
 
-//functions
-void updatedisplay(const char* updateString, byte updateDots);//manages the displaying of characters
-void setbrightness();//smooths the sensor valus and set brightness for the display
-void switchhandler();//inputs from the switches and debounces them
-void calcdisplaydefault(bool reload); //calculate the default display
+// functions
+void updatedisplay(const char *updateString, byte updateDots); // manages the displaying of characters
+void setbrightness();                                          // smooths the sensor valus and set brightness for the display
+void switchhandler();                                          // inputs from the switches and debounces them
+void calcdisplaydefault(bool reload);                          // calculate the default display
 
-#if DEBUG == 1 //this function is only used for debuging
-  void printDateTime(const RtcDateTime& dt);
+#if DEBUG == 1 // this function is only used for debuging
+void printDateTime(const RtcDateTime &dt);
 #endif
 
-//Setup
-void setup() 
+// Setup
+void setup()
 {
-  // debug_init(); 
-  delay(500); //give everything time to power up
+  // debug_init();
+  delay(500); // give everything time to power up
 
-  #if DEBUG == 1 //setup serial for debug
-    Serial.begin(9600);
-  #endif
+#if DEBUG == 1 // setup serial for debug
+  Serial.begin(9600);
+#endif
 
-  debugln("------------------- Debuging enabled -------------------");
+  debugln(F("------------------- Debuging enabled -------------------"));
 
-  //pinmodes
-  pinMode(dpClear,OUTPUT);
-  pinMode(dpData,OUTPUT);
-  pinMode(dpOe,OUTPUT);
-  pinMode(dpClk,OUTPUT);
-  pinMode(dpRclkU4,OUTPUT);
-  pinMode(dpRclkU5,OUTPUT);
-  pinMode(dpRclkU6,OUTPUT);
-  pinMode(dpRclkU7,OUTPUT);
-  pinMode(dplight,OUTPUT);
+  // pinmodes
+  pinMode(dpClear, OUTPUT);
+  pinMode(dpData, OUTPUT);
+  pinMode(dpOe, OUTPUT);
+  pinMode(dpClk, OUTPUT);
+  pinMode(dpRclkU4, OUTPUT);
+  pinMode(dpRclkU5, OUTPUT);
+  pinMode(dpRclkU6, OUTPUT);
+  pinMode(dpRclkU7, OUTPUT);
+  pinMode(dplight, OUTPUT);
 
-  pinMode(sSet,INPUT);
-  pinMode(sInc,INPUT);
-  pinMode(sDec,INPUT);
-  
+  pinMode(sSet, INPUT);
+  pinMode(sInc, INPUT);
+  pinMode(sDec, INPUT);
+
   attachPCINT(digitalPinToPCINT(sSet), switchhandler, CHANGE);
   attachPCINT(digitalPinToPCINT(sInc), switchhandler, CHANGE);
   attachPCINT(digitalPinToPCINT(sDec), switchhandler, CHANGE);
 
-  //read EEPROMvalues for the brighness display and correct unrealistic values
-  EEPROM.get(EEPROMadrOffset,brightnessoffset);
+  // read EEPROMvalues for the brighness display and correct unrealistic values
+  EEPROM.get(EEPROMadrOffset, brightnessoffset);
 
-  if((brightnessoffset < -500) or (brightnessoffset > 0))
+  if ((brightnessoffset < -500) or (brightnessoffset > 0))
   {
-    debug("Brigness offset invalid It was corrected from : ");
+    debug(F("Brigness offset invalid It was corrected from : "));
     debugln(brightnessoffset);
-    brightnessoffset = 0; //default offset
+    brightnessoffset = 0; // default offset
     errorcode = errorcode | B00001000;
-
   }
 
-  EEPROM.get(EEPROMadrScaling,brightnessscaling);
+  EEPROM.get(EEPROMadrScaling, brightnessscaling);
 
-  if((brightnessscaling > 10) or (brightnessscaling < 1))
+  if ((brightnessscaling > 10) or (brightnessscaling < 1))
   {
-    debug("Brigness scaling invalid. It was corrected from : ");
+    debug(F("Brigness scaling invalid. It was corrected from : "));
     debugln(brightnessoffset);
-    brightnessscaling = 4; //default scaling
+    brightnessscaling = 4; // default scaling
     errorcode = errorcode | B00001000;
-
   }
-    
-  debug("light offsetfactor is : ");
+
+  debug(F("light offsetfactor is : "));
   debugln(brightnessoffset);
-  debug("light scalingfactor is : ");
+  debug(F("light scalingfactor is : "));
   debugln(brightnessscaling);
 
-  //set the static IOs for and clear  the shift registers 
-  digitalWrite(dpOe,false); //set outputenable false to enable the output (always the case)
-  digitalWrite(dpClear,true); //set Clear to true to not clear the segments
+  // set the static IOs for and clear  the shift registers
+  digitalWrite(dpOe, false);   // set outputenable false to enable the output (always the case)
+  digitalWrite(dpClear, true); // set Clear to true to not clear the segments
   delay(1);
-  digitalWrite(dpClear,false); //reset the shift register to a blank state
+  digitalWrite(dpClear, false); // reset the shift register to a blank state
   delay(1);
-  digitalWrite(dpClear,true); 
+  digitalWrite(dpClear, true);
 
-  digitalWrite(dplight,255);//set the display to full brighness (in case anything else does not work)
+  digitalWrite(dplight, 255); // set the display to full brighness (in case anything else does not work)
 
-  Wire.begin();//start I2C for RTC
-  Wire.setTimeout(10000);//set timeout
-  Rtc.Begin();//start RTC
+  Wire.begin();           // start I2C for RTC
+  Wire.setTimeout(10000); // set timeout
+  Rtc.Begin();            // start RTC
 
-  if (!Rtc.GetIsRunning())//check if RTC is running and set to run if not
+  if (!Rtc.GetIsRunning()) // check if RTC is running and set to run if not
   {
     Rtc.SetIsRunning(true);
-    debugln("Rtc was not running");
+    debugln(F("Rtc was not running"));
   }
 
-  if(!Rtc.IsDateTimeValid()) //test if RTC is ok
+  if (!Rtc.IsDateTimeValid()) // test if RTC is ok
   {
     errorcode = errorcode | B00000001;
-    debugln("RTC time not valid");
-    Rtc.SetDateTime(rtctimecurrent);//update the time to one thats valid
+    debugln(F("RTC time not valid"));
+    Rtc.SetDateTime(rtctimecurrent); // update the time to one thats valid
   }
-  else //time is ok
+  else // time is ok
   {
-    debugln("RTC time is valid");
-    rtctimecurrent = Rtc.GetDateTime();//sync time from RTC
+    debugln(F("RTC time is valid"));
+    rtctimecurrent = Rtc.GetDateTime(); // sync time from RTC
   }
-  
-  #if DEBUG == 1 //this function call is only used for debuging
 
-    debug("rtctimecurrent : "); 
-    printDateTime(rtctimecurrent); // print system time
+#if DEBUG == 1 // this function call is only used for debuging
 
-    debug("RTC : ");
+  debug(F("rtctimecurrent : "));
+  printDateTime(rtctimecurrent); // print system time
 
-    RtcDateTime timeforprint = Rtc.GetDateTime();
+  debug(F("RTC : "));
 
-    printDateTime(timeforprint);
+  RtcDateTime timeforprint = Rtc.GetDateTime();
 
-  #endif
-  
+  printDateTime(timeforprint);
+
+#endif
+
   if ((Rtc.LastError() != 0) || !Rtc.GetIsRunning())
   {
     errorcode = errorcode | B00000010;
@@ -192,65 +190,65 @@ void setup()
     debugln(Rtc.LastError());
   }
 
-  EEPROM.get(EEPOMadrStarttime,rtctimeVfree);// get the time/date of the eeprom when the last velociraptor happened
+  EEPROM.get(EEPOMadrStarttime, rtctimeVfree); // get the time/date of the eeprom when the last velociraptor happened
 
-  if(!rtctimeVfree.IsValid())
+  if (!rtctimeVfree.IsValid())
   { // check if the eeprom has valid time and set compile time if wrong
-    debugln("A invalid Date/time was stored in the EEprom");
+    debugln(F("A invalid Date/time was stored in the EEprom"));
     rtctimeVfree = rtctimecurrent;
     errorcode = errorcode | B00000100;
   }
   else
   {
     ;
-    #if DEBUG == 1
-      debug("Time since last incident : ");
-      printDateTime(rtctimeVfree);
-    #endif
+#if DEBUG == 1
+    debug(F("Time since last incident : "));
+    printDateTime(rtctimeVfree);
+#endif
   }
 
-  //set every segment to true to make a display test
+  // set every segment to true to make a display test
   updatedisplay("8888", B00001111);
   delay(500); // give time to observe display defects
 
   ITimer2.init();
   ITimer2.attachInterruptInterval(calltime, setbrightness, 0);
 
-  //Init completed
-  debugln("------------------- Initialized -------------------");
+  // Init completed
+  debugln(F("------------------- Initialized -------------------"));
 }
 
-//loop
+// loop
 void loop()
 {
 
-// State Machine : 
+  // State Machine :
 
-  #if DEBUG == 1
-    static systemstate statemachinelast;
-    if(statemachinelast != statemachine)
-    {
-      debug("The state changed from : ");
-      debug(statemachinelast);
-      debug(" to : ");
-      debugln(statemachine);
-      statemachinelast = statemachine;
-    }
-  #endif
+#if DEBUG == 1
+  static systemstate statemachinelast;
+  if (statemachinelast != statemachine)
+  {
+    debug(F("The state changed from : "));
+    debug(statemachinelast);
+    debug(F(" to : "));
+    debugln(statemachine);
+    statemachinelast = statemachine;
+  }
+#endif
 
-/*  ------------------------------------------------------------
-                    State Machine
-    ------------------------------------------------------------ */
+  /*  ------------------------------------------------------------
+                      State Machine
+      ------------------------------------------------------------ */
   switch (statemachine)
   {
 
-/*  ------------------------------------------------------------
-                    Init
-    ------------------------------------------------------------ */
+    /*  ------------------------------------------------------------
+                        Init
+        ------------------------------------------------------------ */
   case state_noinit:
-    debugln("init state was entered");
+    debugln(F("init state was entered"));
     booncestatemachine = false;
-    if((errorcode != 0) || erroroccurednorecovery)//go to error state if a arror is pendent
+    if ((errorcode != 0) || erroroccurednorecovery) // go to error state if a arror is pendent
     {
       statemachine = state_fault;
     }
@@ -260,344 +258,335 @@ void loop()
     }
     break;
 
-/*  ------------------------------------------------------------
-                    Default state with unlocked buttons
-    ------------------------------------------------------------ */
-  case state_default: 
+    /*  ------------------------------------------------------------
+                        Default state with unlocked buttons
+        ------------------------------------------------------------ */
+  case state_default:
 
-    if(!booncestatemachine)
+    if (!booncestatemachine)
     {
       booncestatemachine = true;
       calcdisplaydefault(true);
     }
     else
     {
-      calcdisplaydefault(false);//the main function of this thingey
+      calcdisplaydefault(false); // the main function of this thingey
     }
 
-    if(switchset.trigger())
+    if (switchset.trigger())
     {
       booncestatemachine = false;
       statemachine = state_setup;
     }
-    else if (switchdec.buttonStatus && switchinc.buttonStatus)//if both inc and dec are pressed at the same time, a timer of 5 seconds is startet
+    else if (switchdec.buttonStatus && switchinc.buttonStatus) // if both inc and dec are pressed at the same time, a timer of 5 seconds is startet
     {
-
-      if(millis() - timerton >= 5000) // the two switches have to be held 5 seconds
+      if (millis() - timerton >= 5000) // the two switches have to be held 5 seconds
       {
-      booncestatemachine = false;
-      statemachine = state_locked;
-      }     
+        booncestatemachine = false;
+        timerton = millis();
+        statemachine = state_locked;
+      }
     }
-    else //reset timer
+    else // reset timer
     {
       timerton = millis();
     }
     break;
 
-/*  ------------------------------------------------------------
-                    Default state with locked buttons
-    ------------------------------------------------------------ */
+    /*  ------------------------------------------------------------
+                        Default state with locked buttons
+        ------------------------------------------------------------ */
   case state_locked:
 
-    if(!booncestatemachine)
-    {      
+    if (!booncestatemachine)
+    {
       booncestatemachine = true;
       calcdisplaydefault(true);
     }
     else
     {
-      calcdisplaydefault(false);//the main function of this thingey
+      calcdisplaydefault(false); // the main function of this thingey
     }
 
-    if (switchdec.trigger() && switchinc.trigger())//if both inc and dec are pressed at the same time, a timer of 5 seconds is startet
+    if (switchdec.buttonStatus && switchinc.buttonStatus) // if both inc and dec are pressed at the same time, a timer of 5 seconds is startet
     {
-      if(millis() - timerton >= 5000) // the two switches have to be held 5 seconds
+      if (millis() - timerton >= 5000) // the two switches have to be held 5 seconds
       {
         booncestatemachine = false;
+        timerton = millis();
         statemachine = state_default;
-      }    
+      }
     }
-    else //reset timer
+    else // reset timer
     {
       timerton = millis();
     }
     break;
 
+    /*  ------------------------------------------------------------------------------------------------------------------------
+                        Setup menu navigation
+        ------------------------------------------------------------------------------------------------------------------------ */
 
-/*  ------------------------------------------------------------------------------------------------------------------------
-                    Setup menu navigation
-    ------------------------------------------------------------------------------------------------------------------------ */
-
-/*  ------------------------------------------------------------
-                    Setup menu base
-    ------------------------------------------------------------ */
+    /*  ------------------------------------------------------------
+                        Setup menu base
+        ------------------------------------------------------------ */
   case state_setup:
 
-    if(!booncestatemachine)
+    if (!booncestatemachine)
     {
       booncestatemachine = true;
       updatedisplay("set ", B00001111);
     }
-    if(switchinc.trigger())//navigate to the next menu
+    if (switchinc.trigger()) // navigate to the next menu
     {
       booncestatemachine = false;
       statemachine = state_setup_Brigtness_menu;
     }
-    else if (switchdec.trigger())//navigate to the previous menu
+    else if (switchdec.trigger()) // navigate to the previous menu
     {
       booncestatemachine = false;
       statemachine = state_setup_resetcounter_menu;
-
     }
-    else if (switchset.trigger())//navigate to the main menu
+    else if (switchset.trigger()) // navigate to the main menu
     {
       booncestatemachine = false;
       statemachine = state_default;
-
     }
-    
-    break;
-    
 
-/*  ------------------------------------------------------------
-                    Setup Brighness
-    ------------------------------------------------------------ */
+    break;
+
+    /*  ------------------------------------------------------------
+                        Setup Brighness
+        ------------------------------------------------------------ */
   case state_setup_Brigtness_menu:
 
-    if(!booncestatemachine)
+    if (!booncestatemachine)
     {
       booncestatemachine = true;
       updatedisplay("ambl", B00001000);
     }
 
-    if(switchinc.trigger())//navigate to the next menu
+    if (switchinc.trigger()) // navigate to the next menu
     {
       booncestatemachine = false;
       statemachine = state_setup_Brigtness_Displayvalue_menu;
     }
-    else if (switchdec.trigger())//navigate to the previous menu
+    else if (switchdec.trigger()) // navigate to the previous menu
     {
       booncestatemachine = false;
       statemachine = state_setup;
     }
-    else if (switchset.trigger())//navigate to the sub menu
+    else if (switchset.trigger()) // navigate to the sub menu
     {
       booncestatemachine = false;
       statemachine = state_setup_Brigtness_1;
     }
-    
+
     break;
 
-/*  ------------------------------------------------------------
-                    display Brighness values
-    ------------------------------------------------------------ */
+    /*  ------------------------------------------------------------
+                        display Brighness values
+        ------------------------------------------------------------ */
   case state_setup_Brigtness_Displayvalue_menu:
 
-    if(!booncestatemachine)
+    if (!booncestatemachine)
     {
       booncestatemachine = true;
       updatedisplay("amb?", B00000100);
     }
 
-    if(switchinc.trigger())//navigate to the next menu
+    if (switchinc.trigger()) // navigate to the next menu
     {
       booncestatemachine = false;
       statemachine = state_setup_time_menu;
     }
-    else if (switchdec.trigger())//navigate to the previous menu
+    else if (switchdec.trigger()) // navigate to the previous menu
     {
       booncestatemachine = false;
       statemachine = state_setup_Brigtness_menu;
     }
-    else if (switchset.trigger())//navigate to the sub menu
+    else if (switchset.trigger()) // navigate to the sub menu
     {
       booncestatemachine = false;
       statemachine = state_setup_Brigtness_Displayvalue_exec;
     }
-    
+
     break;
 
-/*  ------------------------------------------------------------
-                    Setup Time
-    ------------------------------------------------------------ */
+    /*  ------------------------------------------------------------
+                        Setup Time
+        ------------------------------------------------------------ */
   case state_setup_time_menu:
 
-    if(!booncestatemachine)
+    if (!booncestatemachine)
     {
       booncestatemachine = true;
       updatedisplay("time", B00000010);
     }
 
-    if(switchinc.trigger())//navigate to the next menu
+    if (switchinc.trigger()) // navigate to the next menu
     {
       booncestatemachine = false;
       statemachine = state_setup_time_Display_menu;
     }
-    else if (switchdec.trigger())//navigate to the previous menu
+    else if (switchdec.trigger()) // navigate to the previous menu
     {
       booncestatemachine = false;
       statemachine = state_setup_Brigtness_Displayvalue_menu;
     }
-    else if (switchset.trigger())//navigate to the sub menu
+    else if (switchset.trigger()) // navigate to the sub menu
     {
       booncestatemachine = false;
       statemachine = state_setup_time_set;
     }
-    
+
     break;
 
-/*  ------------------------------------------------------------
-                    Display Time
-    ------------------------------------------------------------ */
+    /*  ------------------------------------------------------------
+                        Display Time
+        ------------------------------------------------------------ */
   case state_setup_time_Display_menu:
 
-    if(booncestatemachine == false)
+    if (booncestatemachine == false)
     {
       booncestatemachine = true;
       updatedisplay("tim?", B00000001);
     }
 
-    if(switchinc.trigger())//navigate to the next menu
+    if (switchinc.trigger()) // navigate to the next menu
     {
       booncestatemachine = false;
       statemachine = state_setup_resetcounter_menu;
     }
-    else if (switchdec.trigger())//navigate to the previous menu
+    else if (switchdec.trigger()) // navigate to the previous menu
     {
       booncestatemachine = false;
       statemachine = state_setup_time_menu;
     }
-    else if (switchset.trigger())//navigate to the sub menu
+    else if (switchset.trigger()) // navigate to the sub menu
     {
       booncestatemachine = false;
       statemachine = state_setup_time_Display_exec;
     }
-    
-    break;    
 
-/*  ------------------------------------------------------------
-                    Reset time of last velociraptor incident
-    ------------------------------------------------------------ */
+    break;
+
+    /*  ------------------------------------------------------------
+                        Reset time of last velociraptor incident
+        ------------------------------------------------------------ */
   case state_setup_resetcounter_menu:
 
-     if(booncestatemachine == false)
+    if (booncestatemachine == false)
     {
       booncestatemachine = true;
       updatedisplay("res?", B00001001);
     }
 
-    if(switchinc.trigger())//navigate to the next menu
+    if (switchinc.trigger()) // navigate to the next menu
     {
       booncestatemachine = false;
       statemachine = state_setup;
     }
-    else if (switchdec.trigger())//navigate to the previous menu
+    else if (switchdec.trigger()) // navigate to the previous menu
     {
       booncestatemachine = false;
       statemachine = state_setup_time_Display_menu;
     }
-    else if (switchset.trigger())//navigate to the sub menu
+    else if (switchset.trigger()) // navigate to the sub menu
     {
       booncestatemachine = false;
       statemachine = state_setup_resetcounter_reask;
     }
-    
+
     break;
 
+    /*  ------------------------------------------------------------------------------------------------------------------------
+                        Different function steps
+        ------------------------------------------------------------------------------------------------------------------------ */
 
-/*  ------------------------------------------------------------------------------------------------------------------------
-                    Different function steps
-    ------------------------------------------------------------------------------------------------------------------------ */
-
-/*  ------------------------------------------------------------
-                    setup brigness step 1 :  zero offset
-    ------------------------------------------------------------ */
+    /*  ------------------------------------------------------------
+                        setup brigness step 1 :  zero offset
+        ------------------------------------------------------------ */
   case state_setup_Brigtness_1:
 
-    if(booncestatemachine == false)
+    if (booncestatemachine == false)
     {
       booncestatemachine = true;
       updatedisplay("stp1", B00001100);
     }
 
-    if (switchset.trigger())// do step 1 of brighness calibration
+    if (switchset.trigger()) // do step 1 of brighness calibration
     {
 
-      //on the last read write the new value 
+      // on the last read write the new value
       brightnessoffset = -1 * brighnessvalprocessed;
-      if((brightnessoffset < -500) or (brightnessoffset > 0))//check for realistic values
-      { //unrealistic values
+      if ((brightnessoffset < -500) or (brightnessoffset > 0)) // check for realistic values
+      {                                                        // unrealistic values
 
-        debug("sensor reads : ");
+        debug(F("sensor reads : "));
         debugln(analogRead(aSiglight));
-        debugln("offset not written : unrealistiv values -> setting offset to 0");
+        debugln(F("offset not written : unrealistiv values -> setting offset to 0"));
 
         brightnessoffset = 0;
 
         errorcode = B00010000;
 
-        booncestatemachine = false;      
+        booncestatemachine = false;
         statemachine = state_fault;
-
-
       }
       else
-      {//realistic values
+      { // realistic values
 
-        EEPROM.put(EEPROMadrOffset,brightnessoffset);
+        EEPROM.put(EEPROMadrOffset, brightnessoffset);
 
-        debug("sensor reads : ");
+        debug(F("sensor reads : "));
         debugln(analogRead(aSiglight));
-        debug("Offset written : ");
+        debug(F("Offset written : "));
         debugln(brightnessoffset);
 
-        booncestatemachine = false;      
+        booncestatemachine = false;
         statemachine = state_setup_Brigtness_2;
       }
-
-
     }
 
     break;
 
-/*  ------------------------------------------------------------
-                    setup brigness step 2 :  scaling
-    ------------------------------------------------------------ */
+    /*  ------------------------------------------------------------
+                        setup brigness step 2 :  scaling
+        ------------------------------------------------------------ */
   case state_setup_Brigtness_2:
 
-    if(booncestatemachine == false)
+    if (booncestatemachine == false)
     {
       booncestatemachine = true;
       updatedisplay("stp2", B00001111);
     }
 
-    if (switchset.trigger())// do step 2 of brighness calibration
+    if (switchset.trigger()) // do step 2 of brighness calibration
     {
 
-      brightnessscaling =  ((brighnessvalprocessed + brightnessoffset) / 255 ) + 1;
+      brightnessscaling = ((brighnessvalprocessed + brightnessoffset) / 255) + 1;
 
-      if((brightnessscaling > 10) or (brightnessscaling < 1)) //check for realistic values
-      {// unrealistic values
+      if ((brightnessscaling > 10) or (brightnessscaling < 1)) // check for realistic values
+      {                                                        // unrealistic values
 
-        debug("sensor reads : ");
+        debug(F("sensor reads : "));
         debugln(analogRead(aSiglight));
-        debug("scaling not written : unrealistiv values -> scaling offset to 4");
+        debug(F("scaling not written : unrealistiv values -> scaling offset to 4"));
 
         brightnessoffset = 0;
 
         errorcode = B00010000;
-        booncestatemachine = false;      
+        booncestatemachine = false;
         statemachine = state_fault;
-
-      } 
+      }
       else
-      {//realistic values
-        EEPROM.put(EEPROMadrScaling,brightnessscaling);
-        
-        debug("sensor reads : ");
+      { // realistic values
+        EEPROM.put(EEPROMadrScaling, brightnessscaling);
+
+        debug(F("sensor reads : "));
         debugln(analogRead(aSiglight));
-        debug("Scaling written : ");
+        debug(F("Scaling written : "));
         debugln(brightnessscaling);
 
         booncestatemachine = false;
@@ -606,38 +595,37 @@ void loop()
     }
     break;
 
-/*  ------------------------------------------------------------
-                    display Brighness values
-    ------------------------------------------------------------ */
+    /*  ------------------------------------------------------------
+                        display Brighness values
+        ------------------------------------------------------------ */
   case state_setup_Brigtness_Displayvalue_exec:
     static uint8_t whattodisplayBrighness;
-    static uint8_t whattodisplayBrighnesslast; 
+    static uint8_t whattodisplayBrighnesslast;
 
-    if(booncestatemachine == false)
+    if (booncestatemachine == false)
     {
       whattodisplayBrighness = 0;
       whattodisplayBrighnesslast = 1;
       booncestatemachine = true;
-
     }
-    
-    if((whattodisplayBrighness != whattodisplayBrighnesslast) || (whattodisplayBrighness == 0))
+
+    if ((whattodisplayBrighness != whattodisplayBrighnesslast) || (whattodisplayBrighness == 0))
     {
       whattodisplayBrighnesslast = whattodisplayBrighness;
       char tmpString[] = "0000";
       byte tmpByte;
       switch (whattodisplayBrighness)
       {
-      case 0: //display current light sensor
+      case 0: // display current light sensor
         sprintf(tmpString, "%4d", brighnessvalprocessed % 10000);
         tmpByte = B00001000;
         break;
 
-      case 1://display offset
+      case 1: // display offset
         sprintf(tmpString, "%4d", brightnessoffset % 10000);
         tmpByte = B00000100;
         break;
-      case 2://display scaling
+      case 2: // display scaling
         sprintf(tmpString, "%4d", brightnessscaling % 10000);
         tmpByte = B00000010;
         break;
@@ -649,19 +637,19 @@ void loop()
       updatedisplay(tmpString, tmpByte);
     }
 
-    if(switchinc.trigger())//go to next value
+    if (switchinc.trigger()) // go to next value
     {
       whattodisplayBrighness++;
     }
-    else if (switchdec.trigger())//go to last value
+    else if (switchdec.trigger()) // go to last value
     {
       whattodisplayBrighness--;
-      if(whattodisplayBrighness > 2)
+      if (whattodisplayBrighness > 2)
       {
         whattodisplayBrighness = 2;
       }
     }
-    if (switchset.trigger())//go back to the menu
+    if (switchset.trigger()) // go back to the menu
     {
       booncestatemachine = false;
       statemachine = state_setup_Brigtness_Displayvalue_menu;
@@ -669,28 +657,27 @@ void loop()
 
     break;
 
-/*  ------------------------------------------------------------
-                    Setup Time
-    ------------------------------------------------------------ */
+    /*  ------------------------------------------------------------
+                        Setup Time
+        ------------------------------------------------------------ */
   case state_setup_time_set:
-    
+
     static uint8_t setupstep;
     static uint8_t setupsteplast;
-    static uint8_t monthtemp;//local variable for the setting the months because it cant be set directly via incrementaion of seconds
-    static uint16_t yeartemp;//local variable for the setting the Years because it cant be set directly via incrementaion of seconds
+    static uint8_t monthtemp; // local variable for the setting the months because it cant be set directly via incrementaion of seconds
+    static uint16_t yeartemp; // local variable for the setting the Years because it cant be set directly via incrementaion of seconds
 
-    if(booncestatemachine == false)
+    if (booncestatemachine == false)
     {
       booncestatemachine = true;
       setupstep = 1;
       setupsteplast = 0;
-      rtctimecurrent = Rtc.GetDateTime();//at the start read the present time
+      rtctimecurrent = Rtc.GetDateTime(); // at the start read the present time
       yeartemp = rtctimecurrent.Year();
       monthtemp = rtctimecurrent.Month();
     }
 
-
-    if((setupstep !=setupsteplast) || ( switchinc.trigger()) || (switchdec.trigger()) )
+    if ((setupstep != setupsteplast) || (switchinc.trigger()) || (switchdec.trigger()))
     {
       setupsteplast = setupstep;
       char tmpString[] = "0000";
@@ -698,34 +685,34 @@ void loop()
 
       switch (setupstep)
       {
-      case 1://set Year
+      case 1: // set Year
 
         if (switchinc.trigger())
         {
-          yeartemp++;//increment the temp year
+          yeartemp++; // increment the temp year
         }
-        else if(switchdec.trigger())
+        else if (switchdec.trigger())
         {
-          yeartemp--;//decrement the temp year
+          yeartemp--; // decrement the temp year
         }
         sprintf(tmpString, "%4d", yeartemp % 10000);
         tmpByte = B00001111;
         break;
 
-      case 2://set Month
+      case 2: // set Month
 
         if (switchinc.trigger())
         {
-          monthtemp++;//increment the temp month
-          if(monthtemp>12)//month clamping
+          monthtemp++;        // increment the temp month
+          if (monthtemp > 12) // month clamping
           {
             monthtemp = 1;
           }
         }
-        else if(switchdec.trigger())//month clamping
+        else if (switchdec.trigger()) // month clamping
         {
-          monthtemp--;//decrement the temp month
-          if(monthtemp>12)
+          monthtemp--; // decrement the temp month
+          if (monthtemp > 12)
           {
             monthtemp = 12;
           }
@@ -734,94 +721,93 @@ void loop()
         tmpByte = B00001100;
         break;
 
-      case 3://set Day
+      case 3: // set Day
 
         if (switchinc.trigger())
         {
-          rtctimecurrent += uint32_t(86400);//increment the time one day
+          rtctimecurrent += uint32_t(86400); // increment the time one day
         }
-        else if(switchdec.trigger())
+        else if (switchdec.trigger())
         {
-          rtctimecurrent -= 86400;//decrement the time one day
+          rtctimecurrent -= 86400; // decrement the time one day
         }
         sprintf(tmpString, "dd%2d", rtctimecurrent.Day() % 100);
         tmpByte = B00000011;
         break;
 
-      case 4://set Hour
+      case 4: // set Hour
 
         if (switchinc.trigger())
         {
-          rtctimecurrent += uint32_t(3600);//increment the time one hour
+          rtctimecurrent += uint32_t(3600); // increment the time one hour
         }
-        else if(switchdec.trigger())
+        else if (switchdec.trigger())
         {
-          rtctimecurrent -= 3600;//decrement the time one hour
+          rtctimecurrent -= 3600; // decrement the time one hour
         }
         sprintf(tmpString, "%2dhh", rtctimecurrent.Hour() % 100);
         tmpByte = B00001100;
         break;
 
-      case 5://set minute
+      case 5: // set minute
 
         if (switchinc.trigger())
         {
-          rtctimecurrent += uint32_t(60);//increment the time one minute
+          rtctimecurrent += uint32_t(60); // increment the time one minute
         }
-        else if(switchdec.trigger())
+        else if (switchdec.trigger())
         {
-          rtctimecurrent -= 60;//decrement the time one minute
+          rtctimecurrent -= 60; // decrement the time one minute
         }
         sprintf(tmpString, "mm%2d", rtctimecurrent.Minute() % 100);
         tmpByte = B00000011;
         break;
 
-      case 6://set Seconds
-
+      case 6: // set Seconds
 
         if (switchinc.trigger())
         {
-          rtctimecurrent += uint32_t(1);//increment the time one Second
+          rtctimecurrent += uint32_t(1); // increment the time one Second
         }
-        else if(switchdec.trigger())
+        else if (switchdec.trigger())
         {
-          rtctimecurrent -= 1;//decrement the time one Second
+          rtctimecurrent -= 1; // decrement the time one Second
         }
         sprintf(tmpString, "ss%2d", rtctimecurrent.Second() % 100);
         tmpByte = B00001100;
         break;
 
-      case 7:// write time and go to menu
-        { //explicit case here because placeholder crosses initialization
-        RtcDateTime placeholder(yeartemp, //the 
-          monthtemp,
-          rtctimecurrent.Day(),
-          rtctimecurrent.Hour(),
-          rtctimecurrent.Minute(),
-          rtctimecurrent.Second());
+      case 7:                             // write time and go to menu
+      {                                   // explicit case here because placeholder crosses initialization
+        RtcDateTime placeholder(yeartemp, // the
+                                monthtemp,
+                                rtctimecurrent.Day(),
+                                rtctimecurrent.Hour(),
+                                rtctimecurrent.Minute(),
+                                rtctimecurrent.Second());
 
-          if(placeholder.IsValid() && !(yeartemp <= 2000))//check 
-          {
-            #if DEBUG == 1
-              debug("The time was set to : ");
-              printDateTime(rtctimecurrent);
-            #endif
+        if (placeholder.IsValid() && !(yeartemp <= 2000)) // check
+        {
+#if DEBUG == 1
+          debug(F("The time was set to : "));
+          printDateTime(rtctimecurrent);
+#endif
 
-            Rtc.SetDateTime(placeholder);// write the time to the RTC if the time is valid
-            rtctimecurrent = placeholder;
+          Rtc.SetDateTime(placeholder); // write the time to the RTC if the time is valid
+          rtctimecurrent = placeholder;
 
-            booncestatemachine = false;
-            statemachine = state_default;            
-          }
-          else
-          {
-            debugln("The time was not set due to it beeing not valid");
-            errorcode = B00010000;
-            booncestatemachine = false;      
-            statemachine = state_fault;
-          }
+          booncestatemachine = false;
+          statemachine = state_default;
         }
-        break;
+        else
+        {
+          debugln(F("The time was not set due to it beeing not valid"));
+          errorcode = B00010000;
+          booncestatemachine = false;
+          statemachine = state_fault;
+        }
+      }
+      break;
 
       default:
         setupstep = 0;
@@ -830,7 +816,7 @@ void loop()
       }
 
       updatedisplay(tmpString, tmpByte);
-      debug("current Time setting step : ");
+      debug(F("current Time setting step : "));
       debugln(setupstep);
     }
 
@@ -838,25 +824,24 @@ void loop()
     {
       setupstep = setupstep + 1;
     }
-    
+
     break;
 
-
-/*  ------------------------------------------------------------
-                    display time
-    ------------------------------------------------------------ */
+    /*  ------------------------------------------------------------
+                        display time
+        ------------------------------------------------------------ */
   case state_setup_time_Display_exec:
     static uint8_t whattodisplayTime;
     static uint8_t whattodisplayTimelast;
 
-    if(booncestatemachine == false)
+    if (booncestatemachine == false)
     {
       whattodisplayTime = 0;
       whattodisplayTimelast = 1;
       booncestatemachine = true;
     }
-    
-    if((whattodisplayTime != whattodisplayTimelast) || whattodisplayTime == 5)
+
+    if ((whattodisplayTime != whattodisplayTimelast) || whattodisplayTime == 5)
     {
       rtctimecurrent = Rtc.GetDateTime();
       whattodisplayTimelast = whattodisplayTime;
@@ -864,27 +849,27 @@ void loop()
       byte tmpByte;
       switch (whattodisplayTime)
       {
-      case 0: //display Year
+      case 0: // display Year
         sprintf(tmpString, "%4d", rtctimecurrent.Year() % 10000);
         tmpByte = B00001000;
-        break;   
-      case 1://display month
+        break;
+      case 1: // display month
         sprintf(tmpString, "mm%2d", rtctimecurrent.Month() % 100);
         tmpByte = B00000010;
         break;
-      case 2://display day
+      case 2: // display day
         sprintf(tmpString, "dd%2d", rtctimecurrent.Day() % 100);
         tmpByte = B00000100;
         break;
-      case 3://display hour
+      case 3: // display hour
         sprintf(tmpString, "hh%2d", rtctimecurrent.Hour() % 100);
         tmpByte = B00000010;
         break;
-      case 4://display minutes
+      case 4: // display minutes
         sprintf(tmpString, "mm%2d", rtctimecurrent.Minute() % 100);
         tmpByte = B00001100;
         break;
-      case 5://display seconds
+      case 5: // display seconds
         sprintf(tmpString, "ss%2d", rtctimecurrent.Second() % 100);
         tmpByte = B00001110;
         break;
@@ -896,72 +881,71 @@ void loop()
       updatedisplay(tmpString, tmpByte);
     }
 
-    else if(switchinc.trigger())//go to next value
+    else if (switchinc.trigger()) // go to next value
     {
       whattodisplayTime++;
     }
-    else if (switchdec.trigger())//go to last value
+    else if (switchdec.trigger()) // go to last value
     {
       whattodisplayTime--;
-      if(whattodisplayTime > 5)
+      if (whattodisplayTime > 5)
       {
         whattodisplayTime = 5;
       }
     }
-    else if (switchset.trigger())//go back to the menu
+    else if (switchset.trigger()) // go back to the menu
     {
       statemachine = state_setup_time_Display_menu;
       booncestatemachine = false;
     }
-    
+
     break;
 
-/*  ------------------------------------------------------------------------------------------------------------------------
-                    Reset time : ask again
-    ------------------------------------------------------------------------------------------------------------------------ */
+    /*  ------------------------------------------------------------------------------------------------------------------------
+                        Reset time : ask again
+        ------------------------------------------------------------------------------------------------------------------------ */
   case state_setup_resetcounter_reask:
 
-     if(booncestatemachine == false)
+    if (booncestatemachine == false)
     {
       booncestatemachine = true;
       updatedisplay("sure", B00001111);
     }
 
-    if (switchset.trigger())//navigate to the parent menu
+    if (switchset.trigger()) // navigate to the parent menu
     {
       booncestatemachine = false;
       statemachine = state_setup;
     }
-    else if (switchdec.buttonStatus && switchinc.buttonStatus)//if both inc and dec are pressed at the same time, a timer of 5 seconds is startet
+    else if (switchdec.buttonStatus && switchinc.buttonStatus) // if both inc and dec are pressed at the same time, a timer of 5 seconds is startet
     {
 
-      if(millis() - timerton >= 5000) // the two switches have to be held 5 seconds
+      if (millis() - timerton >= 5000) // the two switches have to be held 5 seconds
       {
 
-        rtctimecurrent = Rtc.GetDateTime();//sync both times
+        rtctimecurrent = Rtc.GetDateTime(); // sync both times
         rtctimeVfree = Rtc.GetDateTime();
-        EEPROM.put(EEPOMadrStarttime,rtctimeVfree);//write time to EEPROM
+        EEPROM.put(EEPOMadrStarttime, rtctimeVfree); // write time to EEPROM
 
-        statemachine = state_default;//go back to menu after reset
+        statemachine = state_default; // go back to menu after reset
         booncestatemachine = false;
-        debugln("Time since last incident was reset to current time");
-      }    
-      
+        debugln(F("Time since last incident was reset to current time"));
+      }
     }
-    else //reset timer
+    else // reset timer
     {
       timerton = millis();
     }
 
     break;
 
-/*  ------------------------------------------------------------
-                    Error state
-    ------------------------------------------------------------ */
+    /*  ------------------------------------------------------------
+                        Error state
+        ------------------------------------------------------------ */
   case state_fault:
   {
     /*
-    Error states (1 is the least significant bit): 
+    Error states (1 is the least significant bit):
     1 : RTC time not valid
     2 : RTC fatal error
     3 : invalid time for the last incident
@@ -972,66 +956,64 @@ void loop()
     static byte lasterror;
     static bool alldisplayed;
 
-    if(booncestatemachine == false)
+    if (booncestatemachine == false)
     {
-      debug("Ther is a error : ");
+      debug(F("Ther is a error : "));
       debugln(errorcode);
       booncestatemachine = true;
       timerton = millis();
       lasterror = 0;
       alldisplayed = false;
       updatedisplay("err ", B00000001);
-  
     }
 
-
-    if((millis() - timerton >= 5000) && !alldisplayed)
+    if ((millis() - timerton >= 5000) && !alldisplayed)
     {
-      debug("What is going on with all displayed : ");
+      debug(F("What is going on with all displayed : "));
       debugln(alldisplayed);
       timerton = millis();
       char tmpStr[] = "0000";
-      for (byte i = 1; i <= 6; i++)//run through all the errors 
+      for (byte i = 1; i <= 6; i++) // run through all the errors
       {
-        debug("for states : ");
+        debug(F("for states : "));
         debugln(i);
         debugln(errorworkingvalue);
 
-        if (((errorworkingvalue & B00000001) == B00000001) && (i > lasterror))// check if the error bit was set or the error was already displayed
+        if (((errorworkingvalue & B00000001) == B00000001) && (i > lasterror)) // check if the error bit was set or the error was already displayed
         {
           lasterror = i;
-          sprintf(tmpStr,"err%d", lasterror % 10);
+          sprintf(tmpStr, "err%d", lasterror % 10);
           break;
         }
 
-        if(i == 6) //if all errors have been displayed continue or wait for a reset
+        if (i == 6) // if all errors have been displayed continue or wait for a reset
         {
           alldisplayed = true;
         }
-        errorworkingvalue = errorworkingvalue>>1;
+        errorworkingvalue = errorworkingvalue >> 1;
       }
       updatedisplay(tmpStr, B00000000);
     }
 
-    if(alldisplayed && !erroroccurednorecovery)//When every error has been displayed and the error is recoverable, go to normal operation. If not a reset is needed
+    if (alldisplayed && !erroroccurednorecovery) // When every error has been displayed and the error is recoverable, go to normal operation. If not a reset is needed
     {
-      debugln("All errors have been displayed");
+      debugln(F("All errors have been displayed"));
       errorcode = 0;
       statemachine = state_noinit;
     }
-    else if(alldisplayed && erroroccurednorecovery)
+    else if (alldisplayed && erroroccurednorecovery)
     {
-      updatedisplay("errf", B00000000);  
+      updatedisplay("errf", B00000000);
     }
   }
-    break;
+  break;
 
-/*  ------------------------------------------------------------
-                    default (unknown state)
-    ------------------------------------------------------------ */
+    /*  ------------------------------------------------------------
+                        default (unknown state)
+        ------------------------------------------------------------ */
   default:
 
-    debug("unknown state : ");
+    debug(F("unknown state : "));
     debugln(statemachine);
     booncestatemachine = false;
     statemachine = state_noinit;
@@ -1039,12 +1021,12 @@ void loop()
   }
 }
 
-//Updating the Display with new data
-void updatedisplay(const char* updateString, byte updateDots)
-{ 
+// Updating the Display with new data
+void updatedisplay(const char *updateString, byte updateDots)
+{
   /*
 
-  The display segments are connected to the Shiftregister like this : 
+  The display segments are connected to the Shiftregister like this :
   bit 1 : DP <- least significant bit
   bit 2 : C
   bit 3 : B
@@ -1056,7 +1038,7 @@ void updatedisplay(const char* updateString, byte updateDots)
 
         a
       -----
-     |     | 
+     |     |
     f|     |b
      |     |
       -----
@@ -1069,28 +1051,29 @@ void updatedisplay(const char* updateString, byte updateDots)
   Bedgfabc0
 
   Based on these : https://github.com/dmadison/LED-Segment-ASCII/blob/master/Images/All%20Characters/7-Segment-ASCII-All.png
-  */ 
+  */
   byte dataforshift = B00000000;
 
-  //set shift and data pins to known values  
-  digitalWrite(dpClk,false);
-  digitalWrite(dpData,false);
+  // set shift and data pins to known values
+  digitalWrite(dpClk, false);
+  digitalWrite(dpData, false);
 
-  debugln("Display update ------------");
-  debug("string written to registers : ");
+  debugln(F("Display update ------------"));
+  debug(F("string written to registers : "));
   debugln(updateString);
-  
-  int len = 0;
-  for(;updateString[len] != '\0' ;len++);
 
-  debug("Strlen is: ");
+  int len = 0;
+  for (; updateString[len] != '\0'; len++)
+    ;
+
+  debug(F("Strlen is: "));
   debugln(len);
   len--;
-  for (;len>= 0;len--)
+  for (; len >= 0; len--)
   {
-  
-   switch (updateString[len])
-   {
+
+    switch (updateString[len])
+    {
     case '0':
       dataforshift = B11011110;
       break;
@@ -1159,10 +1142,10 @@ void updatedisplay(const char* updateString, byte updateDots)
       break;
     case 'p':
       dataforshift = B10111100;
-      break;     
+      break;
     case 'r':
       dataforshift = B10100000;
-      break;             
+      break;
     case 's':
       dataforshift = B01111010;
       break;
@@ -1171,10 +1154,10 @@ void updatedisplay(const char* updateString, byte updateDots)
       break;
     case 'u':
       dataforshift = B11000010;
-      break;    
+      break;
     case 'y':
       dataforshift = B01110110;
-      break;  
+      break;
     case ' ':
       dataforshift = B00000000;
       break;
@@ -1182,49 +1165,47 @@ void updatedisplay(const char* updateString, byte updateDots)
       dataforshift = B10101100;
       break;
     default:
+      debugln(F("Unknown character"));
       dataforshift = B11110110;
       break;
     }
 
-    if((updateDots >> len) & 1)
+    if ((updateDots >> len) & 1)
     {
       dataforshift |= B00000001;
     }
 
-    shiftOut(dpData,dpClk,MSBFIRST,dataforshift);
+    shiftOut(dpData, dpClk, MSBFIRST, dataforshift);
 
-    debug("Byte ");
+    debug(F("Byte "));
     debug(len);
-    debug(" : ");
-    #if DEBUG == 1
-      Serial.println(dataforshift,BIN);
-    #endif
-    
+    debug(F(" : "));
+#if DEBUG == 1
+    Serial.println(dataforshift, BIN);
+#endif
   }
 
-  //display the writen characters
-  digitalWrite(dpRclkU4,true);
-  digitalWrite(dpRclkU5,true);
-  digitalWrite(dpRclkU6,true);
-  digitalWrite(dpRclkU7,true);
+  // display the writen characters
+  digitalWrite(dpRclkU4, true);
+  digitalWrite(dpRclkU5, true);
+  digitalWrite(dpRclkU6, true);
+  digitalWrite(dpRclkU7, true);
   delay(1);
-  digitalWrite(dpRclkU4,false);
-  digitalWrite(dpRclkU5,false);
-  digitalWrite(dpRclkU6,false);
-  digitalWrite(dpRclkU7,false);
+  digitalWrite(dpRclkU4, false);
+  digitalWrite(dpRclkU5, false);
+  digitalWrite(dpRclkU6, false);
+  digitalWrite(dpRclkU7, false);
   delay(1);
-  digitalWrite(dpClk,false);
-  digitalWrite(dpData,false);
+  digitalWrite(dpClk, false);
+  digitalWrite(dpData, false);
 
-  debugln("display updated ------------");
-
-
+  debugln(F("display updated ------------"));
 }
 
-//adjust the brightness to ambient light setting
+// adjust the brightness to ambient light setting
 void setbrightness()
 {
-  //This part of the function reads the sensor and smooths the value
+  // This part of the function reads the sensor and smooths the value
 
   static int sensvalues[10];
   static byte sensindex;
@@ -1232,7 +1213,7 @@ void setbrightness()
   sensvalues[sensindex] = analogRead(aSiglight);
   sensindex++;
 
-  if(sensindex >= 10)
+  if (sensindex >= 10)
   {
     sensindex = 0;
   }
@@ -1244,100 +1225,100 @@ void setbrightness()
 
   brighnessvalprocessed = brighnessvalprocessed / 10;
 
-  //this function calculates the brighness value
+  // this function calculates the brighness value
 
   int brightnesstowrite;
-  brightnesstowrite =  brighnessvalprocessed;
+  brightnesstowrite = brighnessvalprocessed;
   brightnesstowrite = brightnesstowrite + brightnessoffset;
   brightnesstowrite = brightnesstowrite / brightnessscaling;
 
-  if(brightnesstowrite> 255)
+  if (brightnesstowrite > 255)
   {
     brightnesstowrite = 255;
   }
 
-  #if allowdisplayoff == 0
-  else if(brightnesstowrite<1)
+#if allowdisplayoff == 0
+  else if (brightnesstowrite < 1)
   {
     brightnesstowrite = 1;
   }
-  #endif
+#endif
 
-  analogWrite(dplight,brightnesstowrite);
-  
-  #if DEBUG == 1 //only print the Brighnessvalue every 5 seconds to not spam the Serial port
-    static long timeforbrighness;
-    if(millis() - timeforbrighness >= 5000 ) 
-    {
-      timeforbrighness = millis();
-      debug("brightness set to ");
-      debugln(brightnesstowrite);
-    }
+  analogWrite(dplight, brightnesstowrite);
 
-  #endif  
-  
+#if DEBUG == 1 // only print the Brighnessvalue every 5 seconds to not spam the Serial port
+  static long timeforbrighness;
+  if (millis() - timeforbrighness >= 5000)
+  {
+    timeforbrighness = millis();
+    debug(F("brightness set to "));
+    debugln(brightnesstowrite);
+  }
+
+#endif
 }
 
-//debounce switches
+// debounce switches
 void switchhandler()
 {
+  debug(F("Switch change detected :"));
+  debugln(millis());
   switchset.scan();
   switchinc.scan();
   switchdec.scan();
 }
 
-#if DEBUG == 1 //this function is only used for debuging
-  void printDateTime(const RtcDateTime& dt)
-  {
-      char datestring[20];
-      debug("the time is : ");
-      snprintf_P(datestring, 
-              countof(datestring),
-              PSTR("%02u/%02u/%04u %02u:%02u:%02u"),
-              dt.Month(),
-              dt.Day(),
-              dt.Year(),
-              dt.Hour(),
-              dt.Minute(),
-              dt.Second() );
-      debugln(datestring);
-  }
+#if DEBUG == 1 // this function is only used for debuging
+void printDateTime(const RtcDateTime &dt)
+{
+  char datestring[20];
+  debug(F("the time is : "));
+  snprintf_P(datestring,
+             countof(datestring),
+             PSTR("%02u/%02u/%04u %02u:%02u:%02u"),
+             dt.Month(),
+             dt.Day(),
+             dt.Year(),
+             dt.Hour(),
+             dt.Minute(),
+             dt.Second());
+  debugln(datestring);
+}
 #endif
 
-void calcdisplaydefault(bool reload) //calculate the default display
+void calcdisplaydefault(bool reload) // calculate the default display
 {
 
-  static unsigned long secondsofday; //seconds until it is midnight maximum is 86400
-  static unsigned long lastmilisread; //timer to reduce RTC reads. the RTC gets read only
-  static uint16_t dayspassed; //the count of days passed 
-  static uint16_t dayspassedlast; //count of days comparrison
+  static unsigned long secondsofday;  // seconds until it is midnight maximum is 86400
+  static unsigned long lastmilisread; // timer to reduce RTC reads. the RTC gets read only
+  static uint16_t dayspassed;         // the count of days passed
+  static uint16_t dayspassedlast;     // count of days comparrison
 
-  if(reload  || (86370 <= (secondsofday + (( millis() - lastmilisread) / 1000 ))) || (30 >= (secondsofday + (( millis() - lastmilisread) / 1000 ))) )//when the time until midnight is within 30 seconds the RTC time gets read (I try to not read the RTC too much)
+  if (reload || (86370 <= (secondsofday + ((millis() - lastmilisread) / 1000))) || (30 >= (secondsofday + ((millis() - lastmilisread) / 1000)))) // when the time until midnight is within 30 seconds the RTC time gets read (I try to not read the RTC too much)
   {
 
     rtctimecurrent = Rtc.GetDateTime();
     dayspassed = rtctimecurrent.TotalDays() - rtctimeVfree.TotalDays();
-    secondsofday = (long(rtctimecurrent.Hour()) * 3600) + (long(rtctimecurrent.Minute()) * 60 ) + long(rtctimecurrent.Second());
+    secondsofday = (long(rtctimecurrent.Hour()) * 3600) + (long(rtctimecurrent.Minute()) * 60) + long(rtctimecurrent.Second());
     lastmilisread = millis();
 
-    debug("seconds of the day : ");
+    debug(F("seconds of the day : "));
     debugln(secondsofday);
-    debug("days passed rtc : ");
+    debug(F("days passed rtc : "));
     debugln(rtctimecurrent.TotalDays());
-    debug("days passed Vfree : ");
+    debug(F("days passed Vfree : "));
     debugln(rtctimeVfree.TotalDays());
-
   }
 
-  if((dayspassed != dayspassedlast) || reload)
+  if ((dayspassed != dayspassedlast) || reload)
   {
     reload = false;
-    debugln("displaying days passed");
+    debugln(F("displaying days passed"));
     dayspassedlast = dayspassed;
 
     char tmpString[] = "    ";
 
     sprintf(tmpString, "%4d", dayspassed % 10000);
-    updatedisplay(tmpString, statemachine == state_locked?0:B00001000);
-  } 
+    updatedisplay(tmpString, statemachine == state_locked ? 0 : B00001000);
+  }
 }
