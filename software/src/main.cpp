@@ -18,6 +18,7 @@ This project uses the RTC library by Michael Miller TODO : add the rest!
 
 // Timer Setup
 #define USE_TIMER_2 true
+#define USE_TIMER_1 true
 #include <TimerInterrupt.h>
 
 #include "setup.h"
@@ -25,20 +26,20 @@ This project uses the RTC library by Michael Miller TODO : add the rest!
 RtcDS1307<TwoWire> Rtc(Wire); // setup for the RTC
 
 // global variables
-int brightnessoffset;      // offset for led brightness (should be negative, typically it is zero)
-int brightnessscaling;     // scaling for brightness (should be between 1 and 10, typically it is 4)
-int brighnessvalprocessed; // sensor reading smoothed (average of 10 readings)
+int brightnessoffset = 0;      // offset for led brightness (should be negative, typically it is zero)
+int brightnessscaling = 4;     // scaling for brightness (should be between 1 and 10, typically it is 4)
+int brighnessvalprocessed = 0; // sensor reading smoothed (average of 10 readings)
 
 Button switchset{sSet}; // buttoninstance for the setswitch
 Button switchinc{sInc}; // buttoninstance for the incswitch
 Button switchdec{sDec}; // buttoninstance for the decswitch
 
-bool erroroccurednorecovery = false; // true if an error has occured that cant be recovered This flag needs a powercycle to reset
-byte errorcode = 0;                  // contains a error code if one is triggered
+byte errorcode = 0;        // contains a error code if one is triggered
+byte errorIsDisplayed = 0; // contains the last error that was displayed
 
 unsigned long timerton; // timer that can be used to create a simple timer no matter what time the RTC is
 
-bool booncestatemachine; // used to execute functions only once when the state machine switchse state
+bool booncestatemachine = false; // used to execute functions only once when the state machine switchse state
 
 // enumerator of the different states that the menu can be
 enum systemstate
@@ -59,6 +60,15 @@ enum systemstate
   state_setup_time_Display_exec,           // 13 : dislay the time
   state_setup_resetcounter_menu,           // 14 : setupmenu for resetting the counter
   state_setup_resetcounter_reask           // 15 : Ask for confirmation to reset counter
+};
+
+enum errorstate
+{
+  error_RTCtime = B00000001,     // RTC time not valid
+  error_RTCfatal = B00000010,    // RTC fatal error
+  error_invalidtime = B00000100, // invalid time for the last incident
+  error_brighness = B00001000,   // Brighness has invalid calibration values
+  error_unrealistic = B00010000  // calibration values are unrealistic
 };
 
 systemstate statemachine; // system state
@@ -114,12 +124,12 @@ void setup()
   // read EEPROMvalues for the brighness display and correct unrealistic values
   EEPROM.get(EEPROMadrOffset, brightnessoffset);
 
-  if ((brightnessoffset < -500) or (brightnessoffset > 0))
+  if ((brightnessoffset < -500) || (brightnessoffset > 0))
   {
     debug(F("Brigness offset invalid It was corrected from : "));
     debugln(brightnessoffset);
     brightnessoffset = 0; // default offset
-    errorcode = errorcode | B00001000;
+    errorcode |= error_brighness;
   }
 
   EEPROM.get(EEPROMadrScaling, brightnessscaling);
@@ -129,7 +139,7 @@ void setup()
     debug(F("Brigness scaling invalid. It was corrected from : "));
     debugln(brightnessoffset);
     brightnessscaling = 4; // default scaling
-    errorcode = errorcode | B00001000;
+    errorcode |= error_unrealistic;
   }
 
   debug(F("light offsetfactor is : "));
@@ -159,7 +169,7 @@ void setup()
 
   if (!Rtc.IsDateTimeValid()) // test if RTC is ok
   {
-    errorcode = errorcode | B00000001;
+    errorcode |= error_RTCtime;
     debugln(F("RTC time not valid"));
     Rtc.SetDateTime(rtctimecurrent); // update the time to one thats valid
   }
@@ -184,8 +194,7 @@ void setup()
 
   if ((Rtc.LastError() != 0) || !Rtc.GetIsRunning())
   {
-    errorcode = errorcode | B00000010;
-    erroroccurednorecovery = true;
+    errorcode |= error_RTCfatal;
     debug("RTC Error : ");
     debugln(Rtc.LastError());
   }
@@ -196,17 +205,15 @@ void setup()
   { // check if the eeprom has valid time and set compile time if wrong
     debugln(F("A invalid Date/time was stored in the EEprom"));
     rtctimeVfree = rtctimecurrent;
-    errorcode = errorcode | B00000100;
+    errorcode |= error_invalidtime;
   }
+#if DEBUG == 1
   else
   {
-    ;
-#if DEBUG == 1
     debug(F("Time since last incident : "));
     printDateTime(rtctimeVfree);
-#endif
   }
-
+#endif
   // set every segment to true to make a display test
   updatedisplay("8888", B00001111);
   delay(500); // give time to observe display defects
@@ -248,7 +255,7 @@ void loop()
   case state_noinit:
     debugln(F("init state was entered"));
     booncestatemachine = false;
-    if ((errorcode != 0) || erroroccurednorecovery) // go to error state if a arror is pendent
+    if (errorcode != 0) // go to error state if a arror is pendent
     {
       statemachine = state_fault;
     }
@@ -845,7 +852,7 @@ void loop()
     {
       rtctimecurrent = Rtc.GetDateTime();
       whattodisplayTimelast = whattodisplayTime;
-      char tmpString[] = "0000";
+      char tmpString[] = "    ";
       byte tmpByte;
       switch (whattodisplayTime)
       {
@@ -874,6 +881,7 @@ void loop()
         tmpByte = B00001110;
         break;
       default:
+        debugln(F("Time display error--------------------------------------"));
         whattodisplayTime = 0;
         whattodisplayTimelast = 1;
         break;
@@ -881,9 +889,13 @@ void loop()
       updatedisplay(tmpString, tmpByte);
     }
 
-    else if (switchinc.trigger()) // go to next value
+    if (switchinc.trigger()) // go to next value
     {
       whattodisplayTime++;
+      if (whattodisplayTime > 5)
+      {
+        whattodisplayTime = 0;
+      }
     }
     else if (switchdec.trigger()) // go to last value
     {
@@ -893,7 +905,7 @@ void loop()
         whattodisplayTime = 5;
       }
     }
-    else if (switchset.trigger()) // go back to the menu
+    if (switchset.trigger()) // go back to the menu
     {
       statemachine = state_setup_time_Display_menu;
       booncestatemachine = false;
@@ -952,58 +964,81 @@ void loop()
     4 : Brighness has invalid calibration values
     5 : calibration values are unrealistic
     */
-    byte errorworkingvalue = errorcode;
-    static byte lasterror;
-    static bool alldisplayed;
 
     if (booncestatemachine == false)
     {
-      debug(F("Ther is a error : "));
-      debugln(errorcode);
+      debugln(F("Error state entered"));
       booncestatemachine = true;
       timerton = millis();
-      lasterror = 0;
-      alldisplayed = false;
       updatedisplay("err ", B00000001);
+      errorIsDisplayed = 0;
     }
 
-    if ((millis() - timerton >= 5000) && !alldisplayed)
+    if ((millis() - timerton >= 5000))
     {
-      debug(F("What is going on with all displayed : "));
-      debugln(alldisplayed);
-      timerton = millis();
-      char tmpStr[] = "0000";
-      for (byte i = 1; i <= 6; i++) // run through all the errors
+      if (!errorcode) // When every error has been displayed and the error is recoverable, go to normal operation. If not a reset is needed
       {
-        debug(F("for states : "));
-        debugln(i);
-        debugln(errorworkingvalue);
-
-        if (((errorworkingvalue & B00000001) == B00000001) && (i > lasterror)) // check if the error bit was set or the error was already displayed
-        {
-          lasterror = i;
-          sprintf(tmpStr, "err%d", lasterror % 10);
-          break;
-        }
-
-        if (i == 6) // if all errors have been displayed continue or wait for a reset
-        {
-          alldisplayed = true;
-        }
-        errorworkingvalue = errorworkingvalue >> 1;
+        debugln(F("All errors have been displayed"));
+        statemachine = state_noinit;
       }
-      updatedisplay(tmpStr, B00000000);
-    }
+      debug(F("Ther is an error : "));
+      debugln(errorcode);
+      timerton = millis();
+      byte errorToDisplay = errorIsDisplayed;
+      errorIsDisplayed = 0;
+      do
+      {
+        debugln(F("Looking for errors"));
+        if (errorToDisplay == 0)
+        { // start error display
+          errorToDisplay = 1;
+        }
+        else if (errorToDisplay == 16) // loop around
+        {
+          errorToDisplay = 1;
+        }
+        else
+        {
+          errorToDisplay <<= 1; // normal shift to next
+        }
 
-    if (alldisplayed && !erroroccurednorecovery) // When every error has been displayed and the error is recoverable, go to normal operation. If not a reset is needed
-    {
-      debugln(F("All errors have been displayed"));
-      errorcode = 0;
-      statemachine = state_noinit;
-    }
-    else if (alldisplayed && erroroccurednorecovery)
-    {
-      updatedisplay("errf", B00000000);
+        if ((errorToDisplay & errorcode) != 0)
+        {
+          debug(F("Error found : "));
+          debugln(errorToDisplay);
+          errorIsDisplayed = errorToDisplay;
+        }
+      } while ((errorIsDisplayed == 0) && errorcode); // loop through all errors
+
+      debug("error to display : ");
+      debugln(errorIsDisplayed);
+
+      switch (errorIsDisplayed)
+      {
+      case error_RTCtime:
+        updatedisplay("err1", B00000000);
+        errorcode &= ~error_RTCtime; // clear error
+        break;
+      case error_RTCfatal:
+        updatedisplay("err2", B00001111); // error not recoverable
+        break;
+      case error_invalidtime:
+        updatedisplay("err3", B00000000);
+        errorcode &= ~error_invalidtime; // clear error
+        break;
+      case error_brighness:
+        updatedisplay("err4", B00000000);
+        errorcode &= ~error_brighness; // clear error
+        break;
+      case error_unrealistic:
+        updatedisplay("err5", B00000000);
+        errorcode &= ~error_unrealistic; // clear error
+        break;
+      default:
+        updatedisplay("err?", B00000000);
+        debugln(F("Error code not found"));
+        break;
+      }
     }
   }
   break;
@@ -1066,8 +1101,8 @@ void updatedisplay(const char *updateString, byte updateDots)
   for (; updateString[len] != '\0'; len++)
     ;
 
-  debug(F("Strlen is: "));
-  debugln(len);
+  // debug(F("Strlen is: "));
+  // debugln(len);
   len--;
   for (; len >= 0; len--)
   {
@@ -1177,12 +1212,12 @@ void updatedisplay(const char *updateString, byte updateDots)
 
     shiftOut(dpData, dpClk, MSBFIRST, dataforshift);
 
-    debug(F("Byte "));
-    debug(len);
-    debug(F(" : "));
-#if DEBUG == 1
-    Serial.println(dataforshift, BIN);
-#endif
+    //     debug(F("Byte "));
+    //     debug(len);
+    //     debug(F(" : "));
+    // #if DEBUG == 1
+    //     Serial.println(dataforshift, BIN);
+    // #endif
   }
 
   // display the writen characters
@@ -1229,8 +1264,8 @@ void setbrightness()
 
   int brightnesstowrite;
   brightnesstowrite = brighnessvalprocessed;
-  brightnesstowrite = brightnesstowrite + brightnessoffset;
-  brightnesstowrite = brightnesstowrite / brightnessscaling;
+  brightnesstowrite += brightnessoffset;
+  brightnesstowrite /= brightnessscaling;
 
   if (brightnesstowrite > 255)
   {
@@ -1246,19 +1281,18 @@ void setbrightness()
 
   analogWrite(dplight, brightnesstowrite);
 
-#if DEBUG == 1 // only print the Brighnessvalue every 5 seconds to not spam the Serial port
-  static long timeforbrighness;
-  if (millis() - timeforbrighness >= 5000)
-  {
-    timeforbrighness = millis();
-    debug(F("brightness set to "));
-    debugln(brightnesstowrite);
-  }
+  // #if DEBUG == 1 // only print the Brighnessvalue every 5 seconds to not spam the Serial port
+  //   static long timeforbrighness;
+  //   if (millis() - timeforbrighness >= 5000)
+  //   {
+  //     timeforbrighness = millis();
+  //     debug(F("brightness set to "));
+  //     debugln(brightnesstowrite);
+  //   }
 
-#endif
+  // #endif
 }
 
-// debounce switches
 void switchhandler()
 {
   debug(F("Switch change detected :"));
