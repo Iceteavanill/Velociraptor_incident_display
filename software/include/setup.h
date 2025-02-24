@@ -78,22 +78,22 @@ enum errorstate // binary error codes, that way all can be active at the same ti
     error_unrealistic = B00010000  // calibration values are unrealistic
 };
 
-constexpr char *defaultDisplaysStr[] = {"ini ",  // state_noinit
-                                        "err ",  // state_fault
-                                        nullptr, // state_default
-                                        nullptr, // state_locked
-                                        "set ",  // state_setup
-                                        "ambl",  // state_setup_Brigtness_menu
-                                        "amb?",  // state_setup_Brigtness_Displayvalue_menu
-                                        nullptr, // state_setup_Brigtness_Displayvalue_exec
-                                        "stp1",  // state_setup_Brigtness_1
-                                        "stp2",  // state_setup_Brigtness_2
-                                        "time",  // state_setup_time_menu
-                                        nullptr, // state_setup_time_set
-                                        "tim?",  // state_setup_time_Display_menu
-                                        nullptr, // state_setup_time_Display_exec
-                                        "res?",  // state_setup_resetcounter_menu
-                                        "sure"}; // state_setup_resetcounter_reask
+const char *defaultDisplaysStr[] = {"ini ",  // state_noinit
+                                    "err ",  // state_fault
+                                    nullptr, // state_default
+                                    nullptr, // state_locked
+                                    "set ",  // state_setup
+                                    "ambl",  // state_setup_Brigtness_menu
+                                    "amb?",  // state_setup_Brigtness_Displayvalue_menu
+                                    nullptr, // state_setup_Brigtness_Displayvalue_exec
+                                    "stp1",  // state_setup_Brigtness_1
+                                    "stp2",  // state_setup_Brigtness_2
+                                    "time",  // state_setup_time_menu
+                                    nullptr, // state_setup_time_set
+                                    "tim?",  // state_setup_time_Display_menu
+                                    nullptr, // state_setup_time_Display_exec
+                                    "res?",  // state_setup_resetcounter_menu
+                                    "sure"}; // state_setup_resetcounter_reask
 
 constexpr byte defaultDisplaysByte[] = {B0000,  // state_noinit
                                         B0001,  // state_fault

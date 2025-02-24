@@ -1,6 +1,6 @@
 #include "StateController.h"
 
-StateController::StateController(unsigned int _activeStep, void (*fptr)(unsigned int) = nullptr) : activeStep(_activeStep), actionFunc(fptr)
+StateController::StateController(unsigned int _activeStep, void (*fptr)(unsigned int)) : activeStep(_activeStep), actionFunc(fptr)
 {
   // not used
 }
@@ -41,9 +41,55 @@ bool StateController::doOnce()
   }
 }
 
-void StateController::reset(unsigned int _activeStep = 0)
+void StateController::reset(unsigned int _activeStep, unsigned int _steprange)
 {
   activeStep = _activeStep;
-  lastStep = 0;
-  lastStepForDoOnce = 0;
+  lastStep = activeStep + 1;
+  lastStepForDoOnce = activeStep + 1;
+  stepRange = _steprange;
+}
+
+void StateController::incrementStep(bool inCond)
+{
+  if (inCond)
+  {
+    lastStep = activeStep;
+    if (activeStep == stepRange - 1)
+    {
+      activeStep = 0;
+    }
+    else
+    {
+      activeStep++;
+    }
+    if (actionFunc != nullptr)
+    {
+      actionFunc(activeStep);
+    }
+  }
+}
+
+void StateController::decrementStep(bool inCond)
+{
+  if (inCond)
+  {
+    lastStep = activeStep;
+    if (activeStep == 0)
+    {
+      activeStep = stepRange - 1;
+    }
+    else
+    {
+      activeStep--;
+    }
+    if (actionFunc != nullptr)
+    {
+      actionFunc(activeStep);
+    }
+  }
+}
+
+void StateController::setStepRange(unsigned int _stepRange)
+{
+  stepRange = _stepRange;
 }
