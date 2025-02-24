@@ -15,7 +15,7 @@ This project uses the RTC library by Michael Miller TODO : add the rest!
 #include <Button.h>
 #include <PinChangeInterrupt.h>
 // #include "avr8-stub.h"
-
+#include <StateController.h>
 // Timer Setup
 #define USE_TIMER_2 true
 #define USE_TIMER_1 true
@@ -37,41 +37,9 @@ Button switchdec{sDec}; // buttoninstance for the decswitch
 byte errorcode = 0;        // contains a error code if one is triggered
 byte errorIsDisplayed = 0; // contains the last error that was displayed
 
-unsigned long timerton; // timer that can be used to create a simple timer no matter what time the RTC is
+unsigned long timerton; // timer that can be used to create a simple timer no matter what time the RTC is. Used by multiple functions
 
-bool booncestatemachine = false; // used to execute functions only once when the state machine switchse state
-
-// enumerator of the different states that the menu can be
-enum systemstate
-{
-  state_noinit,                            // 00 : The state machine has not been set and sets some variables and steps to the next step
-  state_fault,                             // 01 : A error has occured and the user has to be informed
-  state_default,                           // 02 : the menu is in its default state of displaying passed days with unlocked switches
-  state_locked,                            // 03 : the menu is in its default state of displaying passed days with locked switches
-  state_setup,                             // 04 : the menu is in the setup mode and the setting can be selected that want to be changed
-  state_setup_Brigtness_menu,              // 05 : setupmenu for setting the light menu
-  state_setup_Brigtness_Displayvalue_menu, // 06 : displaying the values asociated with the Brighness setting
-  state_setup_Brigtness_Displayvalue_exec, // 07 : displaying the values asociated with the Brighness setting
-  state_setup_Brigtness_1,                 // 08 : step 1 in brightness calibration (determine zero offset)
-  state_setup_Brigtness_2,                 // 09 : step 2 in brightness calibration (determin scaling factor)
-  state_setup_time_menu,                   // 10 : setupmenu for setting the time
-  state_setup_time_set,                    // 11 : setting the time
-  state_setup_time_Display_menu,           // 12 : dislay the time menu option
-  state_setup_time_Display_exec,           // 13 : dislay the time
-  state_setup_resetcounter_menu,           // 14 : setupmenu for resetting the counter
-  state_setup_resetcounter_reask           // 15 : Ask for confirmation to reset counter
-};
-
-enum errorstate
-{
-  error_RTCtime = B00000001,     // RTC time not valid
-  error_RTCfatal = B00000010,    // RTC fatal error
-  error_invalidtime = B00000100, // invalid time for the last incident
-  error_brighness = B00001000,   // Brighness has invalid calibration values
-  error_unrealistic = B00010000  // calibration values are unrealistic
-};
-
-systemstate statemachine; // system state
+StateController mainState{state_noinit}; // main statemachine manager
 
 RtcDateTime rtctimecurrent = RtcDateTime(__DATE__, __TIME__); // init RTC time object with Compile time. This object contains the most recent time of the RTC
 RtcDateTime rtctimeVfree = RtcDateTime(__DATE__, __TIME__);   // init RTC time object with Compile time. This object contains the last time a velociraptor incident has happened
@@ -85,6 +53,7 @@ void updatedisplay(const char *updateString, byte updateDots); // manages the di
 void setbrightness();                                          // smooths the sensor valus and set brightness for the display
 void switchhandler();                                          // inputs from the switches and debounces them
 void calcdisplaydefault(bool reload);                          // calculate the default display
+void displayAccordingToState(unsigned int step);               // sets display according to the state
 
 #if DEBUG == 1 // this function is only used for debuging
 void printDateTime(const RtcDateTime &dt);
@@ -147,7 +116,7 @@ void setup()
   debug(F("light scalingfactor is : "));
   debugln(brightnessscaling);
 
-  // set the static IOs for and clear  the shift registers
+  // set the IOs for and clear  the shift registers
   digitalWrite(dpOe, false);   // set outputenable false to enable the output (always the case)
   digitalWrite(dpClear, true); // set Clear to true to not clear the segments
   delay(1);
@@ -232,21 +201,21 @@ void loop()
   // State Machine :
 
 #if DEBUG == 1
-  static systemstate statemachinelast;
-  if (statemachinelast != statemachine)
+  static unsigned int statemachinelast;
+  if (statemachinelast != mainState.activeStep)
   {
     debug(F("The state changed from : "));
     debug(statemachinelast);
     debug(F(" to : "));
-    debugln(statemachine);
-    statemachinelast = statemachine;
+    debugln(mainState.activestep);
+    statemachinelast = mainState.activeStep;
   }
 #endif
 
   /*  ------------------------------------------------------------
                       State Machine
       ------------------------------------------------------------ */
-  switch (statemachine)
+  switch (mainState.activeStep)
   {
 
     /*  ------------------------------------------------------------
@@ -254,14 +223,13 @@ void loop()
         ------------------------------------------------------------ */
   case state_noinit:
     debugln(F("init state was entered"));
-    booncestatemachine = false;
     if (errorcode != 0) // go to error state if a arror is pendent
     {
-      statemachine = state_fault;
+      mainState.nextStep(state_fault);
     }
     else
     {
-      statemachine = state_default;
+      mainState.nextStep(state_default);
     }
     break;
 
@@ -270,9 +238,8 @@ void loop()
         ------------------------------------------------------------ */
   case state_default:
 
-    if (!booncestatemachine)
+    if (mainState.doOnce())
     {
-      booncestatemachine = true;
       calcdisplaydefault(true);
     }
     else
@@ -280,18 +247,14 @@ void loop()
       calcdisplaydefault(false); // the main function of this thingey
     }
 
-    if (switchset.trigger())
-    {
-      booncestatemachine = false;
-      statemachine = state_setup;
-    }
-    else if (switchdec.buttonStatus && switchinc.buttonStatus) // if both inc and dec are pressed at the same time, a timer of 5 seconds is startet
+    mainState.nextStepConditional(state_setup, switchset.trigger());
+
+    if (switchdec.buttonStatus && switchinc.buttonStatus) // if both inc and dec are pressed at the same time, a timer of 5 seconds is startet
     {
       if (millis() - timerton >= 5000) // the two switches have to be held 5 seconds
       {
-        booncestatemachine = false;
         timerton = millis();
-        statemachine = state_locked;
+        mainState.nextStep(state_locked);
       }
     }
     else // reset timer
@@ -305,9 +268,8 @@ void loop()
         ------------------------------------------------------------ */
   case state_locked:
 
-    if (!booncestatemachine)
+    if (mainState.doOnce())
     {
-      booncestatemachine = true;
       calcdisplaydefault(true);
     }
     else
@@ -319,9 +281,8 @@ void loop()
     {
       if (millis() - timerton >= 5000) // the two switches have to be held 5 seconds
       {
-        booncestatemachine = false;
         timerton = millis();
-        statemachine = state_default;
+        mainState.nextStep(state_default);
       }
     }
     else // reset timer
@@ -339,27 +300,9 @@ void loop()
         ------------------------------------------------------------ */
   case state_setup:
 
-    if (!booncestatemachine)
-    {
-      booncestatemachine = true;
-      updatedisplay("set ", B00001111);
-    }
-    if (switchinc.trigger()) // navigate to the next menu
-    {
-      booncestatemachine = false;
-      statemachine = state_setup_Brigtness_menu;
-    }
-    else if (switchdec.trigger()) // navigate to the previous menu
-    {
-      booncestatemachine = false;
-      statemachine = state_setup_resetcounter_menu;
-    }
-    else if (switchset.trigger()) // navigate to the main menu
-    {
-      booncestatemachine = false;
-      statemachine = state_default;
-    }
-
+    mainState.nextStepConditional(state_setup_Brigtness_menu, switchinc.trigger());
+    mainState.nextStepConditional(state_setup_resetcounter_menu, switchdec.trigger());
+    mainState.nextStepConditional(state_default, switchset.trigger());
     break;
 
     /*  ------------------------------------------------------------
@@ -367,27 +310,9 @@ void loop()
         ------------------------------------------------------------ */
   case state_setup_Brigtness_menu:
 
-    if (!booncestatemachine)
-    {
-      booncestatemachine = true;
-      updatedisplay("ambl", B00001000);
-    }
-
-    if (switchinc.trigger()) // navigate to the next menu
-    {
-      booncestatemachine = false;
-      statemachine = state_setup_Brigtness_Displayvalue_menu;
-    }
-    else if (switchdec.trigger()) // navigate to the previous menu
-    {
-      booncestatemachine = false;
-      statemachine = state_setup;
-    }
-    else if (switchset.trigger()) // navigate to the sub menu
-    {
-      booncestatemachine = false;
-      statemachine = state_setup_Brigtness_1;
-    }
+    mainState.nextStepConditional(state_setup_Brigtness_Displayvalue_menu, switchinc.trigger());
+    mainState.nextStepConditional(state_setup, switchdec.trigger());
+    mainState.nextStepConditional(state_setup_Brigtness_1, switchset.trigger());
 
     break;
 
@@ -396,27 +321,9 @@ void loop()
         ------------------------------------------------------------ */
   case state_setup_Brigtness_Displayvalue_menu:
 
-    if (!booncestatemachine)
-    {
-      booncestatemachine = true;
-      updatedisplay("amb?", B00000100);
-    }
-
-    if (switchinc.trigger()) // navigate to the next menu
-    {
-      booncestatemachine = false;
-      statemachine = state_setup_time_menu;
-    }
-    else if (switchdec.trigger()) // navigate to the previous menu
-    {
-      booncestatemachine = false;
-      statemachine = state_setup_Brigtness_menu;
-    }
-    else if (switchset.trigger()) // navigate to the sub menu
-    {
-      booncestatemachine = false;
-      statemachine = state_setup_Brigtness_Displayvalue_exec;
-    }
+    mainState.nextStepConditional(state_setup_time_menu, switchinc.trigger());
+    mainState.nextStepConditional(state_setup_Brigtness_menu, switchdec.trigger());
+    mainState.nextStepConditional(state_setup_Brigtness_Displayvalue_exec, switchset.trigger());
 
     break;
 
@@ -425,27 +332,9 @@ void loop()
         ------------------------------------------------------------ */
   case state_setup_time_menu:
 
-    if (!booncestatemachine)
-    {
-      booncestatemachine = true;
-      updatedisplay("time", B00000010);
-    }
-
-    if (switchinc.trigger()) // navigate to the next menu
-    {
-      booncestatemachine = false;
-      statemachine = state_setup_time_Display_menu;
-    }
-    else if (switchdec.trigger()) // navigate to the previous menu
-    {
-      booncestatemachine = false;
-      statemachine = state_setup_Brigtness_Displayvalue_menu;
-    }
-    else if (switchset.trigger()) // navigate to the sub menu
-    {
-      booncestatemachine = false;
-      statemachine = state_setup_time_set;
-    }
+    mainState.nextStepConditional(state_setup_time_Display_menu, switchinc.trigger());
+    mainState.nextStepConditional(state_setup_Brigtness_Displayvalue_menu, switchdec.trigger());
+    mainState.nextStepConditional(state_setup_time_set, switchset.trigger());
 
     break;
 
@@ -454,27 +343,9 @@ void loop()
         ------------------------------------------------------------ */
   case state_setup_time_Display_menu:
 
-    if (booncestatemachine == false)
-    {
-      booncestatemachine = true;
-      updatedisplay("tim?", B00000001);
-    }
-
-    if (switchinc.trigger()) // navigate to the next menu
-    {
-      booncestatemachine = false;
-      statemachine = state_setup_resetcounter_menu;
-    }
-    else if (switchdec.trigger()) // navigate to the previous menu
-    {
-      booncestatemachine = false;
-      statemachine = state_setup_time_menu;
-    }
-    else if (switchset.trigger()) // navigate to the sub menu
-    {
-      booncestatemachine = false;
-      statemachine = state_setup_time_Display_exec;
-    }
+    mainState.nextStepConditional(state_setup_resetcounter_menu, switchinc.trigger());
+    mainState.nextStepConditional(state_setup_time_menu, switchdec.trigger());
+    mainState.nextStepConditional(state_setup_time_Display_exec, switchset.trigger());
 
     break;
 
@@ -483,27 +354,9 @@ void loop()
         ------------------------------------------------------------ */
   case state_setup_resetcounter_menu:
 
-    if (booncestatemachine == false)
-    {
-      booncestatemachine = true;
-      updatedisplay("res?", B00001001);
-    }
-
-    if (switchinc.trigger()) // navigate to the next menu
-    {
-      booncestatemachine = false;
-      statemachine = state_setup;
-    }
-    else if (switchdec.trigger()) // navigate to the previous menu
-    {
-      booncestatemachine = false;
-      statemachine = state_setup_time_Display_menu;
-    }
-    else if (switchset.trigger()) // navigate to the sub menu
-    {
-      booncestatemachine = false;
-      statemachine = state_setup_resetcounter_reask;
-    }
+    mainState.nextStepConditional(state_setup, switchinc.trigger());
+    mainState.nextStepConditional(state_setup_time_Display_menu, switchdec.trigger());
+    mainState.nextStepConditional(state_setup_resetcounter_reask, switchset.trigger());
 
     break;
 
@@ -515,12 +368,6 @@ void loop()
                         setup brigness step 1 :  zero offset
         ------------------------------------------------------------ */
   case state_setup_Brigtness_1:
-
-    if (booncestatemachine == false)
-    {
-      booncestatemachine = true;
-      updatedisplay("stp1", B00001100);
-    }
 
     if (switchset.trigger()) // do step 1 of brighness calibration
     {
@@ -535,11 +382,8 @@ void loop()
         debugln(F("offset not written : unrealistiv values -> setting offset to 0"));
 
         brightnessoffset = 0;
-
         errorcode = B00010000;
-
-        booncestatemachine = false;
-        statemachine = state_fault;
+        mainState.nextStep(state_fault);
       }
       else
       { // realistic values
@@ -550,9 +394,7 @@ void loop()
         debugln(analogRead(aSiglight));
         debug(F("Offset written : "));
         debugln(brightnessoffset);
-
-        booncestatemachine = false;
-        statemachine = state_setup_Brigtness_2;
+        mainState.nextStep(state_setup_Brigtness_2);
       }
     }
 
@@ -562,12 +404,6 @@ void loop()
                         setup brigness step 2 :  scaling
         ------------------------------------------------------------ */
   case state_setup_Brigtness_2:
-
-    if (booncestatemachine == false)
-    {
-      booncestatemachine = true;
-      updatedisplay("stp2", B00001111);
-    }
 
     if (switchset.trigger()) // do step 2 of brighness calibration
     {
@@ -584,8 +420,7 @@ void loop()
         brightnessoffset = 0;
 
         errorcode = B00010000;
-        booncestatemachine = false;
-        statemachine = state_fault;
+        mainState.nextStep(state_fault);
       }
       else
       { // realistic values
@@ -596,8 +431,7 @@ void loop()
         debug(F("Scaling written : "));
         debugln(brightnessscaling);
 
-        booncestatemachine = false;
-        statemachine = state_setup_Brigtness_menu;
+        mainState.nextStep(state_setup_Brigtness_menu);
       }
     }
     break;
@@ -606,14 +440,13 @@ void loop()
                         display Brighness values
         ------------------------------------------------------------ */
   case state_setup_Brigtness_Displayvalue_exec:
-    static uint8_t whattodisplayBrighness;
-    static uint8_t whattodisplayBrighnesslast;
+    static int whattodisplayBrighness;
+    static int whattodisplayBrighnesslast;
 
-    if (booncestatemachine == false)
+    if (mainState.doOnce())
     {
       whattodisplayBrighness = 0;
       whattodisplayBrighnesslast = 1;
-      booncestatemachine = true;
     }
 
     if ((whattodisplayBrighness != whattodisplayBrighnesslast) || (whattodisplayBrighness == 0))
@@ -647,20 +480,20 @@ void loop()
     if (switchinc.trigger()) // go to next value
     {
       whattodisplayBrighness++;
+      if (whattodisplayBrighness > 2)
+      {
+        whattodisplayBrighness = 0;
+      }
     }
     else if (switchdec.trigger()) // go to last value
     {
       whattodisplayBrighness--;
-      if (whattodisplayBrighness > 2)
+      if (whattodisplayBrighness < 0)
       {
         whattodisplayBrighness = 2;
       }
     }
-    if (switchset.trigger()) // go back to the menu
-    {
-      booncestatemachine = false;
-      statemachine = state_setup_Brigtness_Displayvalue_menu;
-    }
+    mainState.nextStepConditional(state_setup_Brigtness_Displayvalue_menu, switchset.trigger());
 
     break;
 
@@ -674,9 +507,8 @@ void loop()
     static uint8_t monthtemp; // local variable for the setting the months because it cant be set directly via incrementaion of seconds
     static uint16_t yeartemp; // local variable for the setting the Years because it cant be set directly via incrementaion of seconds
 
-    if (booncestatemachine == false)
+    if (mainState.doOnce())
     {
-      booncestatemachine = true;
       setupstep = 1;
       setupsteplast = 0;
       rtctimecurrent = Rtc.GetDateTime(); // at the start read the present time
@@ -694,11 +526,11 @@ void loop()
       {
       case 1: // set Year
 
-        if (switchinc.trigger())
+        if (switchinc.buttonStatus)
         {
           yeartemp++; // increment the temp year
         }
-        else if (switchdec.trigger())
+        else if (switchdec.buttonStatus)
         {
           yeartemp--; // decrement the temp year
         }
@@ -708,7 +540,7 @@ void loop()
 
       case 2: // set Month
 
-        if (switchinc.trigger())
+        if (switchinc.buttonStatus)
         {
           monthtemp++;        // increment the temp month
           if (monthtemp > 12) // month clamping
@@ -716,7 +548,7 @@ void loop()
             monthtemp = 1;
           }
         }
-        else if (switchdec.trigger()) // month clamping
+        else if (switchdec.buttonStatus) // month clamping
         {
           monthtemp--; // decrement the temp month
           if (monthtemp > 12)
@@ -730,11 +562,11 @@ void loop()
 
       case 3: // set Day
 
-        if (switchinc.trigger())
+        if (switchinc.buttonStatus)
         {
           rtctimecurrent += uint32_t(86400); // increment the time one day
         }
-        else if (switchdec.trigger())
+        else if (switchdec.buttonStatus)
         {
           rtctimecurrent -= 86400; // decrement the time one day
         }
@@ -744,11 +576,11 @@ void loop()
 
       case 4: // set Hour
 
-        if (switchinc.trigger())
+        if (switchinc.buttonStatus)
         {
           rtctimecurrent += uint32_t(3600); // increment the time one hour
         }
-        else if (switchdec.trigger())
+        else if (switchdec.buttonStatus)
         {
           rtctimecurrent -= 3600; // decrement the time one hour
         }
@@ -758,11 +590,11 @@ void loop()
 
       case 5: // set minute
 
-        if (switchinc.trigger())
+        if (switchinc.buttonStatus)
         {
           rtctimecurrent += uint32_t(60); // increment the time one minute
         }
-        else if (switchdec.trigger())
+        else if (switchdec.buttonStatus)
         {
           rtctimecurrent -= 60; // decrement the time one minute
         }
@@ -772,11 +604,11 @@ void loop()
 
       case 6: // set Seconds
 
-        if (switchinc.trigger())
+        if (switchinc.buttonStatus)
         {
           rtctimecurrent += uint32_t(1); // increment the time one Second
         }
-        else if (switchdec.trigger())
+        else if (switchdec.buttonStatus)
         {
           rtctimecurrent -= 1; // decrement the time one Second
         }
@@ -803,15 +635,13 @@ void loop()
           Rtc.SetDateTime(placeholder); // write the time to the RTC if the time is valid
           rtctimecurrent = placeholder;
 
-          booncestatemachine = false;
-          statemachine = state_default;
+          mainState.nextStep(state_default);
         }
         else
         {
           debugln(F("The time was not set due to it beeing not valid"));
           errorcode = B00010000;
-          booncestatemachine = false;
-          statemachine = state_fault;
+          mainState.nextStep(state_fault);
         }
       }
       break;
@@ -838,14 +668,13 @@ void loop()
                         display time
         ------------------------------------------------------------ */
   case state_setup_time_Display_exec:
-    static uint8_t whattodisplayTime;
-    static uint8_t whattodisplayTimelast;
+    static int whattodisplayTime;
+    static int whattodisplayTimelast;
 
-    if (booncestatemachine == false)
+    if (mainState.doOnce())
     {
       whattodisplayTime = 0;
       whattodisplayTimelast = 1;
-      booncestatemachine = true;
     }
 
     if ((whattodisplayTime != whattodisplayTimelast) || whattodisplayTime == 5)
@@ -900,16 +729,12 @@ void loop()
     else if (switchdec.trigger()) // go to last value
     {
       whattodisplayTime--;
-      if (whattodisplayTime > 5)
+      if (whattodisplayTime < 0)
       {
         whattodisplayTime = 5;
       }
     }
-    if (switchset.trigger()) // go back to the menu
-    {
-      statemachine = state_setup_time_Display_menu;
-      booncestatemachine = false;
-    }
+    mainState.nextStepConditional(state_setup_time_Display_menu, switchset.trigger());
 
     break;
 
@@ -918,18 +743,9 @@ void loop()
         ------------------------------------------------------------------------------------------------------------------------ */
   case state_setup_resetcounter_reask:
 
-    if (booncestatemachine == false)
-    {
-      booncestatemachine = true;
-      updatedisplay("sure", B00001111);
-    }
+    mainState.nextStepConditional(state_setup, switchset.trigger());
 
-    if (switchset.trigger()) // navigate to the parent menu
-    {
-      booncestatemachine = false;
-      statemachine = state_setup;
-    }
-    else if (switchdec.buttonStatus && switchinc.buttonStatus) // if both inc and dec are pressed at the same time, a timer of 5 seconds is startet
+    if (switchdec.buttonStatus && switchinc.buttonStatus) // if both inc and dec are pressed at the same time, a timer of 5 seconds is startet
     {
 
       if (millis() - timerton >= 5000) // the two switches have to be held 5 seconds
@@ -939,8 +755,7 @@ void loop()
         rtctimeVfree = Rtc.GetDateTime();
         EEPROM.put(EEPOMadrStarttime, rtctimeVfree); // write time to EEPROM
 
-        statemachine = state_default; // go back to menu after reset
-        booncestatemachine = false;
+        mainState.nextStep(state_default);
         debugln(F("Time since last incident was reset to current time"));
       }
     }
@@ -965,12 +780,10 @@ void loop()
     5 : calibration values are unrealistic
     */
 
-    if (booncestatemachine == false)
+    if (mainState.doOnce())
     {
       debugln(F("Error state entered"));
-      booncestatemachine = true;
       timerton = millis();
-      updatedisplay("err ", B00000001);
       errorIsDisplayed = 0;
     }
 
@@ -979,7 +792,7 @@ void loop()
       if (!errorcode) // When every error has been displayed and the error is recoverable, go to normal operation. If not a reset is needed
       {
         debugln(F("All errors have been displayed"));
-        statemachine = state_noinit;
+        mainState.nextStep(state_noinit);
       }
       debug(F("Ther is an error : "));
       debugln(errorcode);
@@ -1049,9 +862,8 @@ void loop()
   default:
 
     debug(F("unknown state : "));
-    debugln(statemachine);
-    booncestatemachine = false;
-    statemachine = state_noinit;
+    debugln(mainState.activeStep);
+    mainState.nextStep(state_noinit);
     break;
   }
 }
@@ -1087,6 +899,12 @@ void updatedisplay(const char *updateString, byte updateDots)
 
   Based on these : https://github.com/dmadison/LED-Segment-ASCII/blob/master/Images/All%20Characters/7-Segment-ASCII-All.png
   */
+
+  if (updateString == NULL) // updatestring is Null (probably from default display) so return
+  {
+    debugln(F("updateString is NULL, returning"));
+    return;
+  }
   byte dataforshift = B00000000;
 
   // set shift and data pins to known values
@@ -1353,6 +1171,11 @@ void calcdisplaydefault(bool reload) // calculate the default display
     char tmpString[] = "    ";
 
     sprintf(tmpString, "%4d", dayspassed % 10000);
-    updatedisplay(tmpString, statemachine == state_locked ? 0 : B00001000);
+    updatedisplay(tmpString, mainState.activeStep == state_locked ? 0 : B00001000);
   }
+}
+
+void displayAccordingToState(unsigned int step)
+{
+  updatedisplay(defaultDisplaysStr[step], defaultDisplaysByte[step]);
 }
