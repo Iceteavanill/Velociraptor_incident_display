@@ -987,7 +987,6 @@ int getSensorValue()
 void sprintfToDisplay(const char *baseStr, int value, byte updateDots)
 {
   char buffer[] = {'\0', '\0', '\0', '\0', '\0'};
-  int i = 0;
   if (baseStr == NULL)
   {
     debugln(F("baseStr is NULL"));
@@ -995,15 +994,14 @@ void sprintfToDisplay(const char *baseStr, int value, byte updateDots)
     mainState.nextStep(SysState_fault);
     return;
   }
-  while (baseStr[i++] != '\0')
+  for(int i = 3; i >= 0; i--)
   {
     buffer[i] = baseStr[i];
-    if (value != 0 || i == 0)
+    if (value != 0 || i == 3)
     { // if the value is 0, the first should still be written
-      buffer[i] = value % 10 + '0';
+      buffer[i] = (value % 10) + '0';
       value /= 10;
     }
-    i++;
   };
   updatedisplay(buffer, updateDots);
 }
