@@ -25,20 +25,29 @@ This project uses the RTC library by Michael Miller TODO : add the rest!
 #include "setup.h"
 
 // functions
+// helperfunctions
 void updatedisplay(const char *updateString, byte updateDots); // manages the displaying of characters
-void setbrightness();                                          // smooths the sensor valus and set brightness for the display
-void switchhandler();                                          // inputs from the switches and debounces them
-void calcdisplaydefault(bool reload);                          // calculate the default display
+void setbrightness();                                          // set brightness for the display
 void displayAccordingToState(unsigned int step);               // sets display according to the state
-void mainStatemachine();                                       // main statemachine
-void resolveAndDisplayError();                                 // resolve and display errors
-void brightnessCalibrationStp1();                              // display calibration step 1
-void brightnessCalibrationStp2();                              // display calibration step 2
-void displayCalibrationData();                                 // display calibration step 3
-void setCurrentTime();                                         // set the time
-void displayCurrentTime();                                     // display the current time
-void displayVelociraptorTime();                                // TODO                                 // display the velociraptor
 int getSensorValue();                                          // get the sensor value (smoothed)
+void calcdisplaydefault(bool reload);                          // calculate the default display
+void sprintfToDisplay(const char *baseStr, int value, byte updateDots);
+void displayTime(const RtcDateTime &dt); // display the time that is given
+
+// ISR
+void switchhandler(); // inputs from the switches and debounces them
+
+// main state dunctions
+void inline mainStatemachine();          // main statemachine
+void inline resolveAndDisplayError();    // resolve and display errors
+void inline brightnessCalibrationStp1(); // display calibration step 1
+void inline brightnessCalibrationStp2(); // display calibration step 2
+void inline displayCalibrationData();    // display calibration step 3
+void inline setCurrentTime();            // set the time
+
+#if DEBUG == 1 // this function is only used for debuging
+void printDateTime(const RtcDateTime &dt);
+#endif
 
 RtcDS1307<TwoWire> Rtc(Wire); // setup for the RTC
 
@@ -55,22 +64,22 @@ byte errorIsDisplayed = 0; // contains the last error that was displayed
 
 STimer tON{STimer_State_TON, 5000}; // timer that is used for simple delay during interactions (error display, wait for button push)
 
-StateController mainState{state_noinit, &displayAccordingToState}; // main statemachine manager
-StateController secondayState{0};                                  // secondary statemachine manager for nested states. Mainly display states
-
-RtcDateTime rtctimecurrent = RtcDateTime(__DATE__, __TIME__); // init RTC time object with Compile time. This object contains the most recent time of the RTC
-RtcDateTime rtctimeVfree = RtcDateTime(__DATE__, __TIME__);   // init RTC time object with Compile time. This object contains the last time a velociraptor incident has happened
+StateController mainState{SysState_noInit, &displayAccordingToState}; // main statemachine manager
+StateController secondayState{0};                                     // secondary statemachine manager for nested states. Mainly display states
 
 /*
  RTC reference https://github.com/Makuna/Rtc/wiki
 */
-
-#if DEBUG == 1 // this function is only used for debuging
-void printDateTime(const RtcDateTime &dt);
-#endif
+RtcDateTime rtctimecurrent = RtcDateTime(__DATE__, __TIME__); // init RTC time object with Compile time. This object contains the most recent time of the RTC
+RtcDateTime rtctimeVfree = RtcDateTime(__DATE__, __TIME__);   // init RTC time object with Compile time. This object contains the last time a velociraptor incident has happened
 
 void setup()
 {
+  // some error checking
+  static_assert(SysState_NumOfTypes == (sizeof(defaultDisplaysStr) / sizeof(defaultDisplaysStr[0])),
+                "Number of states and number of default displays strings do not match");
+  static_assert(SysState_NumOfTypes == (sizeof(defaultDisplaysByte) / sizeof(defaultDisplaysByte[0])),
+                "Number of states and number of default display byes do not match");
   // debug_init();
   delay(500); // give everything time to power up
 
@@ -215,7 +224,6 @@ void loop()
 
 void mainStatemachine()
 {
-
 #if DEBUG == 1
   static unsigned int statemachinelast;
   if (statemachinelast != mainState.activeStep)
@@ -231,19 +239,19 @@ void mainStatemachine()
   switch (mainState.activeStep)
   {
 
-  case state_noinit: // ------------------- init state -------------------
+  case SysState_noInit: // ------------------- init state -------------------
     debugln(F("init state was entered"));
     if (errorcode != 0) // go to error state if a arror is pendent
     {
-      mainState.nextStep(state_fault);
+      mainState.nextStep(SysState_fault);
     }
     else
     {
-      mainState.nextStep(state_default);
+      mainState.nextStep(SysState_idleUnlocked);
     }
     break;
 
-  case state_default: // ------------------- default state -------------------
+  case SysState_idleUnlocked: // ------------------- default state -------------------
     if (mainState.doOnce())
     {
       calcdisplaydefault(true);
@@ -253,7 +261,7 @@ void mainStatemachine()
       calcdisplaydefault(false); // the main function of this thingey
     }
 
-    mainState.nextStepConditional(state_setup, switchset.trigger());
+    mainState.nextStepConditional(SysState_menu_Main, switchset.trigger());
 
     if (switchdec.buttonStatus && switchinc.buttonStatus) // if both inc and dec are pressed at the same time, a timer of 5 seconds is startet
     {
@@ -261,7 +269,7 @@ void mainStatemachine()
       if (tON.out) // the two switches have to be held 5 seconds
       {
         tON.resetTimer();
-        mainState.nextStep(state_locked);
+        mainState.nextStep(SysState_idleLocked);
       }
     }
     else // reset timer
@@ -270,7 +278,7 @@ void mainStatemachine()
     }
     break;
 
-  case state_locked: // ------------------- locked state -------------------
+  case SysState_idleLocked: // ------------------- locked state -------------------
     if (mainState.doOnce())
     {
       calcdisplaydefault(true);
@@ -285,7 +293,7 @@ void mainStatemachine()
       if (tON.out) // the two switches have to be held 5 seconds
       {
         tON.resetTimer();
-        mainState.nextStep(state_default);
+        mainState.nextStep(SysState_idleUnlocked);
       }
     }
     else // reset timer
@@ -294,69 +302,69 @@ void mainStatemachine()
     }
     break;
 
-  case state_setup: // ------------------- setup state -------------------
-    mainState.nextStepConditional(state_setup_Brigtness_menu, switchinc.trigger());
-    mainState.nextStepConditional(state_setup_resetcounter_menu, switchdec.trigger());
-    mainState.nextStepConditional(state_default, switchset.trigger());
+  case SysState_menu_Main: // ------------------- setup state -------------------
+    mainState.nextStepConditional(SysState_menu_calibration, switchinc.trigger());
+    mainState.nextStepConditional(SysState_menu_resetCounter, switchdec.trigger());
+    mainState.nextStepConditional(SysState_idleUnlocked, switchset.trigger());
     break;
 
-  case state_setup_Brigtness_menu:
-    mainState.nextStepConditional(state_setup_Brigtness_Displayvalue_menu, switchinc.trigger());
-    mainState.nextStepConditional(state_setup, switchdec.trigger());
-    mainState.nextStepConditional(state_setup_Brigtness_1, switchset.trigger());
+  case SysState_menu_calibration:
+    mainState.nextStepConditional(SysState_menu_displayCalibrationData, switchinc.trigger());
+    mainState.nextStepConditional(SysState_menu_Main, switchdec.trigger());
+    mainState.nextStepConditional(SysState_setup_calibrationStp1, switchset.trigger());
     break;
 
-  case state_setup_Brigtness_Displayvalue_menu:
-    mainState.nextStepConditional(state_setup_time_menu, switchinc.trigger());
-    mainState.nextStepConditional(state_setup_Brigtness_menu, switchdec.trigger());
-    mainState.nextStepConditional(state_setup_Brigtness_Displayvalue_exec, switchset.trigger());
+  case SysState_menu_displayCalibrationData:
+    mainState.nextStepConditional(SysState_menu_timeSet, switchinc.trigger());
+    mainState.nextStepConditional(SysState_menu_calibration, switchdec.trigger());
+    mainState.nextStepConditional(SysState_display_calibrationData, switchset.trigger());
     break;
 
-  case state_setup_time_menu:
-    mainState.nextStepConditional(state_setup_time_Display_menu, switchinc.trigger());
-    mainState.nextStepConditional(state_setup_Brigtness_Displayvalue_menu, switchdec.trigger());
-    mainState.nextStepConditional(state_setup_time_set, switchset.trigger());
+  case SysState_menu_timeSet:
+    mainState.nextStepConditional(SysState_menu_displayTime, switchinc.trigger());
+    mainState.nextStepConditional(SysState_menu_displayCalibrationData, switchdec.trigger());
+    mainState.nextStepConditional(SysState_setup_time, switchset.trigger());
     break;
 
-  case state_setup_time_Display_menu:
-    mainState.nextStepConditional(state_setup_resetcounter_menu, switchinc.trigger());
-    mainState.nextStepConditional(state_setup_time_menu, switchdec.trigger());
-    mainState.nextStepConditional(state_setup_time_Display_exec, switchset.trigger());
+  case SysState_menu_displayTime:
+    mainState.nextStepConditional(SysState_menu_resetCounter, switchinc.trigger());
+    mainState.nextStepConditional(SysState_menu_timeSet, switchdec.trigger());
+    mainState.nextStepConditional(SysState_display_time, switchset.trigger());
     break;
 
-  case state_setup_resetcounter_menu:
-    mainState.nextStepConditional(state_setup, switchinc.trigger());
-    mainState.nextStepConditional(state_setup_time_Display_menu, switchdec.trigger());
-    mainState.nextStepConditional(state_setup_resetcounter_reask, switchset.trigger());
+  case SysState_menu_resetCounter:
+    mainState.nextStepConditional(SysState_menu_Main, switchinc.trigger());
+    mainState.nextStepConditional(SysState_menu_displayTime, switchdec.trigger());
+    mainState.nextStepConditional(SysState_setup_resetCounterConfirm, switchset.trigger());
     break;
 
-  case state_setup_Brigtness_1:
+  case SysState_setup_calibrationStp1:
     if (switchset.trigger()) // do step 1 of brighness calibration
     {
       brightnessCalibrationStp1();
-      mainState.nextStep(state_setup_Brigtness_2);
+      mainState.nextStep(SysState_setup_calibrationStp2);
     }
-    mainState.nextStepConditional(state_setup_Brigtness_menu, switchdec.trigger() || switchinc.trigger()); // go back to the menu
+    mainState.nextStepConditional(SysState_menu_calibration, switchdec.trigger() || switchinc.trigger()); // go back to the menu
     break;
 
-  case state_setup_Brigtness_2:
+  case SysState_setup_calibrationStp2:
     if (switchset.trigger()) // do step 2 of brighness calibration
     {
       brightnessCalibrationStp2();
-      mainState.nextStep(state_setup_Brigtness_menu);
+      mainState.nextStep(SysState_menu_calibration);
     }
     break;
 
-  case state_setup_Brigtness_Displayvalue_exec:
+  case SysState_display_calibrationData:
     if (mainState.doOnce())
     {
       secondayState.reset(0, 3);
     }
     displayCalibrationData();
-    mainState.nextStepConditional(state_setup_Brigtness_Displayvalue_menu, switchset.trigger());
+    mainState.nextStepConditional(SysState_menu_displayCalibrationData, switchset.trigger());
     break;
 
-  case state_setup_time_set:
+  case SysState_setup_time:
     if (mainState.doOnce())
     {
       secondayState.reset(0, 8);
@@ -364,17 +372,17 @@ void mainStatemachine()
     setCurrentTime();
     break;
 
-  case state_setup_time_Display_exec:
+  case SysState_display_time:
     if (mainState.doOnce())
     {
       secondayState.reset(0, 6);
     }
-    displayCurrentTime();
-    mainState.nextStepConditional(state_setup_time_Display_menu, switchset.trigger());
+    displayTime(Rtc.GetDateTime());
+    mainState.nextStepConditional(SysState_menu_displayTime, switchset.trigger());
     break;
 
-  case state_setup_resetcounter_reask:
-    mainState.nextStepConditional(state_setup, switchset.trigger());
+  case SysState_setup_resetCounterConfirm:
+    mainState.nextStepConditional(SysState_menu_Main, switchset.trigger());
     if (switchdec.buttonStatus && switchinc.buttonStatus) // if both inc and dec are pressed at the same time, a timer of 5 seconds is startet
     {
       if (tON.out) // the two switches have to be held 5 seconds
@@ -383,7 +391,7 @@ void mainStatemachine()
         rtctimeVfree = Rtc.GetDateTime();
         EEPROM.put(EEPOMadrStarttime, rtctimeVfree); // write time to EEPROM
 
-        mainState.nextStep(state_default);
+        mainState.nextStep(SysState_idleUnlocked);
         debugln(F("Time since last incident was reset to current time"));
       }
     }
@@ -393,7 +401,7 @@ void mainStatemachine()
     }
     break;
 
-  case state_fault:
+  case SysState_fault:
     if (mainState.doOnce())
     {
       debugln(F("Error state entered"));
@@ -406,7 +414,7 @@ void mainStatemachine()
   default:
     debug(F("unknown state : "));
     debugln(mainState.activeStep);
-    mainState.nextStep(state_noinit);
+    mainState.nextStep(SysState_noInit);
     break;
   }
 }
@@ -660,10 +668,7 @@ void calcdisplaydefault(bool reload)
     debugln(F("displaying days passed"));
     dayspassedlast = dayspassed;
 
-    char tmpString[] = "    ";
-
-    sprintf(tmpString, "%4d", dayspassed % 10000);
-    updatedisplay(tmpString, mainState.activeStep == state_locked ? 0 : 1);
+    sprintfToDisplay("    ", dayspassed, mainState.activeStep == SysState_idleLocked ? 0 : 1);
   }
 }
 
@@ -677,10 +682,10 @@ void resolveAndDisplayError()
   tON.call();
   if ((tON.out))
   {
-    if (!errorcode) // When every error has been displayed and the error is recoverable, go to normal operation. If not a reset is needed
+    if (!errorcode) // When every error has been displayed and the error is recoverable, go to normal operation, If no reset is needed
     {
       debugln(F("All errors have been displayed"));
-      mainState.nextStep(state_noinit);
+      mainState.nextStep(SysState_noInit);
     }
     debug(F("Ther is an error : "));
     debugln(errorcode);
@@ -694,7 +699,7 @@ void resolveAndDisplayError()
       { // start error display
         errorToDisplay = 1;
       }
-      else if (errorToDisplay == 16) // loop around
+      else if (errorToDisplay == (error_NumOfTypes - 1)) // loop around
       {
         errorToDisplay = 1;
       }
@@ -735,6 +740,10 @@ void resolveAndDisplayError()
       updatedisplay("err5", B00000000);
       errorcode &= ~error_unrealistic; // clear error
       break;
+    case error_Nullpointer:
+      updatedisplay("err6", B00000000);
+      errorcode &= ~error_Nullpointer; // clear error
+      break;
     default:
       updatedisplay("err?", B00000000);
       debugln(F("Error code not found"));
@@ -756,7 +765,7 @@ void brightnessCalibrationStp1()
 
     brightnessoffset = 0;
     errorcode = B00010000;
-    mainState.nextStep(state_fault);
+    mainState.nextStep(SysState_fault);
   }
   else
   { // realistic values
@@ -785,7 +794,7 @@ void brightnessCalibrationStp2()
     brightnessoffset = 0;
 
     errorcode = B00010000;
-    mainState.nextStep(state_fault);
+    mainState.nextStep(SysState_fault);
   }
   else
   { // realistic values
@@ -802,29 +811,23 @@ void displayCalibrationData()
 {
   if ((secondayState.doOnce()) || (secondayState.activeStep == 0)) // skip do once to keep getting new data
   {
-    char tmpString[] = "0000";
-    byte tmpByte;
     switch (secondayState.activeStep)
     {
     case 0: // display current light sensor
-      sprintf(tmpString, "%4d", getSensorValue() % 10000);
-      tmpByte = B00000001;
+      sprintfToDisplay("    ", getSensorValue(), B0001);
       break;
 
     case 1: // display offset
-      sprintf(tmpString, "%4d", brightnessoffset % 10000);
-      tmpByte = B00000010;
+      sprintfToDisplay("    ", brightnessoffset, B0010);
       break;
     case 2: // display scaling
-      sprintf(tmpString, "%4d", brightnessscaling % 10000);
-      tmpByte = B00000100;
+      sprintfToDisplay("    ", brightnessscaling, B0100);
       break;
 
     default:
       secondayState.nextStep(0);
       break;
     }
-    updatedisplay(tmpString, tmpByte);
   }
   secondayState.incrementStep(switchinc.trigger());
   secondayState.decrementStep(switchdec.trigger());
@@ -837,9 +840,6 @@ void setCurrentTime()
 
   if ((secondayState.doOnce()) || (switchinc.trigger()) || (switchdec.trigger()))
   {
-    char tmpString[] = "    ";
-    byte tmpByte;
-
     switch (secondayState.activeStep)
     {
     case 0:                               // init variables
@@ -858,8 +858,7 @@ void setCurrentTime()
       {
         yeartemp--; // decrement the temp year
       }
-      sprintf(tmpString, "%4d", yeartemp % 10000);
-      tmpByte = B00001111;
+      sprintfToDisplay("    ", yeartemp, B0000);
       break;
 
     case 2: // set Month
@@ -871,8 +870,7 @@ void setCurrentTime()
       {
         monthtemp = monthtemp < 1 ? 12 : monthtemp--;
       }
-      sprintf(tmpString, "%2dmm", monthtemp % 100);
-      tmpByte = B00001100;
+      sprintfToDisplay("mm  ", monthtemp, B0001);
       break;
 
     case 3: // set Day
@@ -884,8 +882,7 @@ void setCurrentTime()
       {
         rtctimecurrent -= 86400; // decrement the time one day
       }
-      sprintf(tmpString, "dd%2d", rtctimecurrent.Day() % 100);
-      tmpByte = B00000011;
+      sprintfToDisplay("dd  ", rtctimecurrent.Day(), B0010);
       break;
 
     case 4: // set Hour
@@ -897,8 +894,7 @@ void setCurrentTime()
       {
         rtctimecurrent -= 3600; // decrement the time one hour
       }
-      sprintf(tmpString, "%2dhh", rtctimecurrent.Hour() % 100);
-      tmpByte = B00001100;
+      sprintfToDisplay("hh  ", rtctimecurrent.Hour(), B0100);
       break;
 
     case 5: // set minute
@@ -910,8 +906,7 @@ void setCurrentTime()
       {
         rtctimecurrent -= 60; // decrement the time one minute
       }
-      sprintf(tmpString, "mm%2d", rtctimecurrent.Minute() % 100);
-      tmpByte = B00000011;
+      sprintfToDisplay("mm  ", rtctimecurrent.Minute(), B1000);
       break;
 
     case 6: // set Seconds
@@ -923,8 +918,7 @@ void setCurrentTime()
       {
         rtctimecurrent -= 1; // decrement the time one Second
       }
-      sprintf(tmpString, "ss%2d", rtctimecurrent.Second() % 100);
-      tmpByte = B00001100;
+      sprintfToDisplay("ss  ", rtctimecurrent.Second(), B0011);
       break;
 
     case 7:                             // write time and go to menu
@@ -946,13 +940,13 @@ void setCurrentTime()
         Rtc.SetDateTime(placeholder); // write the time to the RTC if the time is valid
         rtctimecurrent = placeholder;
 
-        mainState.nextStep(state_default);
+        mainState.nextStep(SysState_idleUnlocked);
       }
       else
       {
         debugln(F("The time was not set due to it beeing not valid"));
         errorcode = B00010000;
-        mainState.nextStep(state_fault);
+        mainState.nextStep(SysState_fault);
       }
     }
     break;
@@ -963,99 +957,11 @@ void setCurrentTime()
       break;
     }
 
-    updatedisplay(tmpString, tmpByte);
     debug(F("current Time setting step : "));
     debugln(secondayState.activeStep);
   }
 
   secondayState.incrementStep(switchset.trigger());
-}
-
-void displayCurrentTime()
-{
-  if ((secondayState.doOnce()) || secondayState.activeStep == 5) // bypass do once to keep getting new data
-  {
-    rtctimecurrent = Rtc.GetDateTime();
-    char tmpString[] = "    ";
-    byte tmpByte;
-    switch (secondayState.activeStep)
-    {
-    case 0: // display Year
-      sprintf(tmpString, "%4d", rtctimecurrent.Year() % 10000);
-      tmpByte = B00001000;
-      break;
-    case 1: // display month
-      sprintf(tmpString, "mm%2d", rtctimecurrent.Month() % 100);
-      tmpByte = B00000010;
-      break;
-    case 2: // display day
-      sprintf(tmpString, "dd%2d", rtctimecurrent.Day() % 100);
-      tmpByte = B00000100;
-      break;
-    case 3: // display hour
-      sprintf(tmpString, "hh%2d", rtctimecurrent.Hour() % 100);
-      tmpByte = B00000010;
-      break;
-    case 4: // display minutes
-      sprintf(tmpString, "mm%2d", rtctimecurrent.Minute() % 100);
-      tmpByte = B00001100;
-      break;
-    case 5: // display seconds
-      sprintf(tmpString, "ss%2d", rtctimecurrent.Second() % 100);
-      tmpByte = B00001110;
-      break;
-    default:
-      debugln(F("Time display error--------------------------------------"));
-      secondayState.nextStep(0);
-      break;
-    }
-    updatedisplay(tmpString, tmpByte);
-  }
-  secondayState.incrementStep(switchinc.trigger());
-  secondayState.decrementStep(switchdec.trigger());
-}
-
-void displayVelociraptorTime()
-{
-  if ((secondayState.doOnce()) || secondayState.activeStep == 5) // bypass do once to keep getting new data
-  {
-    char tmpString[] = "    ";
-    byte tmpByte;
-    switch (secondayState.activeStep)
-    {
-    case 0: // display Year
-      sprintf(tmpString, "%4d", rtctimeVfree.Year() % 10000);
-      tmpByte = B00001000;
-      break;
-    case 1: // display month
-      sprintf(tmpString, "mm%2d", rtctimeVfree.Month() % 100);
-      tmpByte = B00000010;
-      break;
-    case 2: // display day
-      sprintf(tmpString, "dd%2d", rtctimeVfree.Day() % 100);
-      tmpByte = B00000100;
-      break;
-    case 3: // display hour
-      sprintf(tmpString, "hh%2d", rtctimeVfree.Hour() % 100);
-      tmpByte = B00000010;
-      break;
-    case 4: // display minutes
-      sprintf(tmpString, "mm%2d", rtctimeVfree.Minute() % 100);
-      tmpByte = B00001100;
-      break;
-    case 5: // display seconds
-      sprintf(tmpString, "ss%2d", rtctimeVfree.Second() % 100);
-      tmpByte = B00001110;
-      break;
-    default:
-      debugln(F("Time display error--------------------------------------"));
-      secondayState.nextStep(0);
-      break;
-    }
-    updatedisplay(tmpString, tmpByte);
-  }
-  secondayState.incrementStep(switchinc.trigger());
-  secondayState.decrementStep(switchdec.trigger());
 }
 
 int getSensorValue()
@@ -1076,6 +982,70 @@ int getSensorValue()
   }
   smoothedvalue /= 10;
   return smoothedvalue > 1024 ? 1024 : smoothedvalue; // clamp value
+}
+
+void sprintfToDisplay(const char *baseStr, int value, byte updateDots)
+{
+  char buffer[] = {'\0', '\0', '\0', '\0', '\0'};
+  int i = 0;
+  if (baseStr == NULL)
+  {
+    debugln(F("baseStr is NULL"));
+    errorcode |= error_Nullpointer;
+    mainState.nextStep(SysState_fault);
+    return;
+  }
+  while (baseStr[i++] != '\0')
+  {
+    buffer[i] = baseStr[i];
+    if (value != 0 || i == 0)
+    { // if the value is 0, the first should still be written
+      buffer[i] = value % 10 + '0';
+      value /= 10;
+    }
+    i++;
+  };
+  updatedisplay(buffer, updateDots);
+}
+
+void displayTime(const RtcDateTime &dt)
+{
+  if ((secondayState.doOnce()) || secondayState.activeStep == 5) // bypass do once to keep getting new data because seconds may change
+  {
+    rtctimecurrent = Rtc.GetDateTime(); // refetch current time (it might have changed)
+    switch (secondayState.activeStep)
+    {
+    case 0: // display Year
+      sprintfToDisplay("    ", dt.Year(), B0000);
+      break;
+
+    case 1: // display month
+      sprintfToDisplay("mm  ", dt.Month(), B0001);
+      break;
+
+    case 2: // display day
+      sprintfToDisplay("dd  ", dt.Day(), B0010);
+      break;
+
+    case 3: // display hour
+      sprintfToDisplay("hh  ", dt.Hour(), B0100);
+      break;
+
+    case 4: // display minutes
+      sprintfToDisplay("mm  ", dt.Minute(), B1000);
+      break;
+
+    case 5: // display seconds
+      sprintfToDisplay("ss  ", dt.Second(), B0011);
+      break;
+    default:
+      debugln(F("Time display error--------------------------------------"));
+      secondayState.nextStep(0);
+      break;
+    }
+  }
+  secondayState.incrementStep(switchinc.trigger());
+  secondayState.decrementStep(switchdec.trigger());
 }
 
 #if DEBUG == 1 // this function is only used for debuging
