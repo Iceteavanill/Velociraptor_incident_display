@@ -2,7 +2,7 @@
 This software was written by Iceteavanill for the Velociraptor Project.
 It is provided as is with no liability for anything this software may or may not be the cause of.
 For more information check the github readme.
-This project uses the RTC library by Michael Miller TODO : add the rest!
+This project uses the RTC library by Michael Miller TODO : add the rest! (interrupt & timer)
 */
 
 // libraries used
@@ -30,12 +30,14 @@ void updatedisplay(const char *updateString, byte updateDots); // manages the di
 void setbrightness();                                          // set brightness for the display
 void displayAccordingToState(unsigned int step);               // sets display according to the state
 int getSensorValue();                                          // get the sensor value (smoothed)
-void calcdisplaydefault(bool reload);                          // calculate the default display
+void calcAndDisplayTimeSinceIncident();                        // calculate the default display
 void sprintfToDisplay(const char *baseStr, int value, byte updateDots);
 void displayTime(const RtcDateTime &dt); // display the time that is given
+bool twoSwitchesHeldForTime(Button &button1, Button &Button2);
 
 // ISR
 void switchhandler(); // inputs from the switches and debounces them
+void periodicTasks(); // functions that should be called periodically are called here
 
 // main state dunctions
 void inline mainStatemachine();          // main statemachine
@@ -62,7 +64,8 @@ Button switchdec{sDec}; // buttoninstance for the decswitch
 byte errorcode = 0;        // contains a error code if one is triggered
 byte errorIsDisplayed = 0; // contains the last error that was displayed
 
-STimer tON{STimer_State_TON, 5000}; // timer that is used for simple delay during interactions (error display, wait for button push)
+STimer tON{STimer_State_TON, 5000};          // timer that is used for simple delay during interactions (error display, wait for button push)
+STimer powerTimeout{STimer_State_TON, 5000}; // timer to stay active for a while and then go to sleep
 
 StateController mainState{SysState_noInit, &displayAccordingToState}; // main statemachine manager
 StateController secondayState{0};                                     // secondary statemachine manager for nested states. Mainly display states
@@ -70,17 +73,33 @@ StateController secondayState{0};                                     // seconda
 /*
  RTC reference https://github.com/Makuna/Rtc/wiki
 */
+
 RtcDateTime rtctimecurrent = RtcDateTime(__DATE__, __TIME__); // init RTC time object with Compile time. This object contains the most recent time of the RTC
 RtcDateTime rtctimeVfree = RtcDateTime(__DATE__, __TIME__);   // init RTC time object with Compile time. This object contains the last time a velociraptor incident has happened
 
+// some error checking
+// check if defaultDisplaysStr and defaultDisplaysByte is as big as SysState_NumOfTypes
+static_assert(SysState_NumOfTypes == (sizeof(defaultDisplaysStr) / sizeof(defaultDisplaysStr[0])),
+              "Number of states and number of default displays strings do not match");
+static_assert(SysState_NumOfTypes == (sizeof(defaultDisplaysByte) / sizeof(defaultDisplaysByte[0])),
+              "Number of states and number of default display byes do not match");
+// check if error states are set correctly
+static_assert((error_RTCtime |
+               error_RTCfatal |
+               error_invalidtime |
+               error_brighness |
+               error_unrealistic |
+               error_Nullpointer) ==
+                  (error_RTCtime +
+                   error_RTCfatal +
+                   error_invalidtime +
+                   error_brighness +
+                   error_unrealistic +
+                   error_Nullpointer),
+              "Error state numbering was not done correctly");
+
 void setup()
 {
-  // some error checking
-  static_assert(SysState_NumOfTypes == (sizeof(defaultDisplaysStr) / sizeof(defaultDisplaysStr[0])),
-                "Number of states and number of default displays strings do not match");
-  static_assert(SysState_NumOfTypes == (sizeof(defaultDisplaysByte) / sizeof(defaultDisplaysByte[0])),
-                "Number of states and number of default display byes do not match");
-  // debug_init();
   delay(500); // give everything time to power up
 
 #if DEBUG == 1 // setup serial for debug
@@ -211,7 +230,7 @@ void setup()
   delay(500); // give time to observe display defects
 
   ITimer2.init();
-  ITimer2.attachInterruptInterval(calltime, setbrightness, 0);
+  ITimer2.attachInterruptInterval(calltime, periodicTasks, 0); // start automatic brightness adjustment
 
   // Init completed
   debugln(F("------------------- Initialized -------------------"));
@@ -241,7 +260,7 @@ void mainStatemachine()
 
   case SysState_noInit: // ------------------- init state -------------------
     debugln(F("init state was entered"));
-    if (errorcode != 0) // go to error state if a arror is pendent
+    if (errorcode != 0) // go to error state if a error is pendent
     {
       mainState.nextStep(SysState_fault);
     }
@@ -254,52 +273,33 @@ void mainStatemachine()
   case SysState_idleUnlocked: // ------------------- default state -------------------
     if (mainState.doOnce())
     {
-      calcdisplaydefault(true);
+      powerTimeout.resetTimer();
+      secondayState.reset(0, 3);
     }
     else
     {
-      calcdisplaydefault(false); // the main function of this thingey
+      powerTimeout.call();
+      calcAndDisplayTimeSinceIncident();
     }
 
     mainState.nextStepConditional(SysState_menu_Main, switchset.trigger());
 
-    if (switchdec.buttonStatus && switchinc.buttonStatus) // if both inc and dec are pressed at the same time, a timer of 5 seconds is startet
+    if (twoSwitchesHeldForTime(switchdec, switchinc))
     {
-      tON.call();
-      if (tON.out) // the two switches have to be held 5 seconds
-      {
-        tON.resetTimer();
-        mainState.nextStep(SysState_idleLocked);
-      }
+      mainState.nextStep(SysState_idleLocked);
     }
-    else // reset timer
-    {
-      tON.resetTimer();
-    }
+
     break;
 
   case SysState_idleLocked: // ------------------- locked state -------------------
-    if (mainState.doOnce())
+
+    // insert unlocked stuff
+
+    if (twoSwitchesHeldForTime(switchdec, switchinc))
     {
-      calcdisplaydefault(true);
+      mainState.nextStep(SysState_idleUnlocked);
     }
-    else
-    {
-      calcdisplaydefault(false); // the main function of this thingey
-    }
-    if (switchdec.buttonStatus && switchinc.buttonStatus) // if both inc and dec are pressed at the same time, a timer of 5 seconds is startet
-    {
-      tON.call();
-      if (tON.out) // the two switches have to be held 5 seconds
-      {
-        tON.resetTimer();
-        mainState.nextStep(SysState_idleUnlocked);
-      }
-    }
-    else // reset timer
-    {
-      tON.resetTimer();
-    }
+
     break;
 
   case SysState_menu_Main: // ------------------- setup state -------------------
@@ -383,21 +383,15 @@ void mainStatemachine()
 
   case SysState_setup_resetCounterConfirm:
     mainState.nextStepConditional(SysState_menu_Main, switchset.trigger());
-    if (switchdec.buttonStatus && switchinc.buttonStatus) // if both inc and dec are pressed at the same time, a timer of 5 seconds is startet
-    {
-      if (tON.out) // the two switches have to be held 5 seconds
-      {
-        rtctimecurrent = Rtc.GetDateTime(); // sync both times
-        rtctimeVfree = Rtc.GetDateTime();
-        EEPROM.put(EEPOMadrStarttime, rtctimeVfree); // write time to EEPROM
 
-        mainState.nextStep(SysState_idleUnlocked);
-        debugln(F("Time since last incident was reset to current time"));
-      }
-    }
-    else // reset timer
+    if (twoSwitchesHeldForTime(switchdec, switchinc))
     {
-      tON.resetTimer();
+      rtctimecurrent = Rtc.GetDateTime(); // sync both times
+      rtctimeVfree = Rtc.GetDateTime();
+      EEPROM.put(EEPOMadrStarttime, rtctimeVfree); // write time to EEPROM
+
+      mainState.nextStep(SysState_idleUnlocked);
+      debugln(F("Time since last incident was reset to current time"));
     }
     break;
 
@@ -638,15 +632,46 @@ void switchhandler()
   switchdec.scan();
 }
 
-void calcdisplaydefault(bool reload)
+void calcAndDisplayTimeSinceIncident()
 {
+  switch (secondayState.activeStep)
+  {
+  case 0:
+  default:
+    // device has switched from some other task to this. Read RTC and init timer for sleep reactivation
+    rtctimecurrent = Rtc.GetDateTime();
+    int dayspassed = rtctimecurrent.TotalDays() - rtctimeVfree.TotalDays();
+    sprintfToDisplay("    ", dayspassed, mainState.activeStep == SysState_idleLocked ? 0 : 1);
 
+    debug(F("days passed rtc : "));
+    debugln(rtctimecurrent.TotalDays());
+    debug(F("days passed Vfree : "));
+    debugln(rtctimeVfree.TotalDays());
+    debug(F(" = "));
+    debugln(dayspassed);
+
+    secondayState.incrementStep(true);
+
+    break;
+
+  case 1:
+    ;
+    break;
+
+  case 2:
+
+    break;
+  }
+
+  return;
+  /*
   static unsigned long secondsofday;  // seconds until it is midnight maximum is 86400
   static unsigned long lastmilisread; // timer to reduce RTC reads. the RTC gets read only
   static uint16_t dayspassed;         // the count of days passed
   static uint16_t dayspassedlast;     // count of days comparrison
-
-  if (reload || (86370 <= (secondsofday + ((millis() - lastmilisread) / 1000))) || (30 >= (secondsofday + ((millis() - lastmilisread) / 1000)))) // when the time until midnight is within 30 seconds the RTC time gets read (I try to not read the RTC too much)
+  if (
+      (86370 <= (secondsofday + ((millis() - lastmilisread) / 1000))) ||
+      (30 >= (secondsofday + ((millis() - lastmilisread) / 1000)))) // when the time until midnight is within 30 seconds the RTC time gets read (I try to not read the RTC too much)
   {
 
     rtctimecurrent = Rtc.GetDateTime();
@@ -662,14 +687,13 @@ void calcdisplaydefault(bool reload)
     debugln(rtctimeVfree.TotalDays());
   }
 
-  if ((dayspassed != dayspassedlast) || reload)
+  if ((dayspassed != dayspassedlast))
   {
-    reload = false;
     debugln(F("displaying days passed"));
     dayspassedlast = dayspassed;
 
     sprintfToDisplay("    ", dayspassed, mainState.activeStep == SysState_idleLocked ? 0 : 1);
-  }
+  }*/
 }
 
 void displayAccordingToState(unsigned int step)
@@ -987,6 +1011,7 @@ int getSensorValue()
 void sprintfToDisplay(const char *baseStr, int value, byte updateDots)
 {
   char buffer[] = {'\0', '\0', '\0', '\0', '\0'};
+  int i = 0;
   if (baseStr == NULL)
   {
     debugln(F("baseStr is NULL"));
@@ -994,14 +1019,15 @@ void sprintfToDisplay(const char *baseStr, int value, byte updateDots)
     mainState.nextStep(SysState_fault);
     return;
   }
-  for(int i = 3; i >= 0; i--)
+  while (baseStr[i++] != '\0')
   {
     buffer[i] = baseStr[i];
-    if (value != 0 || i == 3)
+    if (value != 0 || i == 0)
     { // if the value is 0, the first should still be written
-      buffer[i] = (value % 10) + '0';
+      buffer[i] = value % 10 + '0';
       value /= 10;
     }
+    i++;
   };
   updatedisplay(buffer, updateDots);
 }
@@ -1063,3 +1089,28 @@ void printDateTime(const RtcDateTime &dt)
   debugln(datestring);
 }
 #endif
+
+bool twoSwitchesHeldForTime(Button &button1, Button &Button2)
+{
+  static STimer holdTimer{STimer_State_TON, 5000};
+  if (button1.buttonStatus && button1.buttonStatus)
+  {
+    holdTimer.call();
+    if (holdTimer.out)
+    {
+      holdTimer.resetTimer();
+      return true;
+    }
+    return false;
+  }
+  else // reset timer
+  {
+    holdTimer.resetTimer();
+    return false;
+  }
+}
+
+void periodicTasks(){
+  setbrightness();
+  
+}

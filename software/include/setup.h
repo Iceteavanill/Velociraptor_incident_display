@@ -2,7 +2,7 @@
 #define setup_h
 
 #include <arduino.h>
-#include <avr/pgmspace.h>
+// #include <avr/pgmspace.h>
 
 // setup for debug
 
@@ -46,7 +46,7 @@ constexpr auto EEPROMadrScaling = 21;  // scaling adress for scaling adress
 constexpr auto EEPOMadrStarttime = 41; // starting day adress
 
 // timerintervall for the display brightness adjustment
-constexpr auto calltime = 50L;
+constexpr auto calltime = 500L;
 
 // enumerator of the different states that the menu can be
 enum systemstate
@@ -85,8 +85,10 @@ enum errorstate // binary error codes, that way all can be active at the same ti
     error_NumOfTypes               // used to check for max number of errors
 };
 
-// nullptr signifies no default setting needed
-const char *defaultDisplaysStr[] = // PROGMEM TOTEST
+// Default Strings to display when entering a specific systemstate
+// nullptr signifies no default setting needed / used
+// using PROGMEM here to store the Strings on the FLASH excusively does not work. Not testet further 
+const char * const defaultDisplaysStr[] =
     {
         "ini ",  // SysState_noInit
         "err ",  // SysState_fault
@@ -110,7 +112,7 @@ const char *defaultDisplaysStr[] = // PROGMEM TOTEST
         nullptr  // SysState_setup_VTime
 };
 
-// entrys where defaultDisplaysStr a null is are only padding because data is not used
+// entrys where defaultDisplaysStr are 0 are padding to have the same length as defaultDisplaysStr
 constexpr byte defaultDisplaysByte[] =
     {
         B0000, // SysState_noInit
