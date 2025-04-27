@@ -9,6 +9,7 @@ void StateController::nextStep(unsigned int inStp)
 {
   lastStep = activeStep;
   activeStep = inStp;
+  doOnceWasDone = false;
   if (actionFunc != nullptr)
   {
     actionFunc(activeStep);
@@ -21,6 +22,7 @@ void StateController::nextStepConditional(unsigned int inStp, bool inCond)
   {
     lastStep = activeStep;
     activeStep = inStp;
+    doOnceWasDone = false;
     if (actionFunc != nullptr)
     {
       actionFunc(activeStep);
@@ -30,9 +32,9 @@ void StateController::nextStepConditional(unsigned int inStp, bool inCond)
 
 bool StateController::doOnce()
 {
-  if (lastStepForDoOnce != activeStep)
+  if (!doOnceWasDone)
   {
-    lastStepForDoOnce = activeStep;
+    doOnceWasDone = true;
     return true;
   }
   else
@@ -45,7 +47,7 @@ void StateController::reset(unsigned int _activeStep, unsigned int _steprange)
 {
   activeStep = _activeStep;
   lastStep = activeStep + 1;
-  lastStepForDoOnce = activeStep + 1;
+  doOnceWasDone = false;
   stepRange = _steprange;
 }
 
@@ -54,6 +56,7 @@ void StateController::incrementStep(bool inCond)
   if (inCond)
   {
     lastStep = activeStep;
+    doOnceWasDone = false;
     if (activeStep == stepRange - 1)
     {
       activeStep = 0;
@@ -74,6 +77,7 @@ void StateController::decrementStep(bool inCond)
   if (inCond)
   {
     lastStep = activeStep;
+    doOnceWasDone = false;
     if (activeStep == 0)
     {
       activeStep = stepRange - 1;

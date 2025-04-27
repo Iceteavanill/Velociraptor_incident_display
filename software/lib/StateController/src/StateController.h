@@ -55,6 +55,6 @@ public:
 
 private:
   void (*actionFunc)(unsigned int) = nullptr;
-  unsigned int lastStepForDoOnce = 0;
+  bool doOnceWasDone = false;
   unsigned int stepRange = 0; // limit step range(count of). If 0 no limit. only active for inc or decrement
 };

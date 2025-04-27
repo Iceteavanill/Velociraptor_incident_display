@@ -29,9 +29,9 @@ void setbrightness();                                          // set brightness
 void displayAccordingToState(unsigned int step);               // sets display according to the state
 int getSensorValue();                                          // get the sensor value (smoothed)
 void calcAndDisplayTimeSinceIncident();                        // calculate the default display
-void sprintfToDisplay(const char *baseStr, int value, byte updateDots);
+void sprintfToDisplay(const char *baseStr, unsigned int value, byte updateDots);
 void displayTime(const RtcDateTime &dt); // display the time of a specified RtcDateTime object
-bool twoSwitchesHeldForTime(Button &button1, Button &Button2);
+bool twoSwitchesHeldForTime(Button &button1, Button &button2);
 bool setCurrentTime(RtcDateTime &timeToEdit); // set the time of a specified RtcDateTime object
 
 // ISR
@@ -274,6 +274,7 @@ void mainStatemachine()
   case SysState_idleUnlocked: // ------------------- default state -------------------
     if (mainState.doOnce())
     {
+      debugln(F("Resetting timer"));
       powerTimeout.resetTimer();
       secondayState.reset(0, 3);
     }
@@ -284,7 +285,7 @@ void mainStatemachine()
       if (powerTimeout.out)
       {
         debugln(F("Going to sleep"));
-        enableSleep();
+        sleep();
       }
     }
 
@@ -363,14 +364,14 @@ void mainStatemachine()
 
     mainState.nextStepConditional(SysState_menu_displayVTime, switchinc.trigger());
     mainState.nextStepConditional(SysState_menu_resetCounter, switchdec.trigger());
-    mainState.nextStepConditional(SysState_setup_resetCounterConfirm, switchset.trigger());
+    mainState.nextStepConditional(SysState_setup_VTime, switchset.trigger());
     break;
 
   case SysState_menu_displayVTime:
 
     mainState.nextStepConditional(SysState_menu_Main, switchinc.trigger());
     mainState.nextStepConditional(SysState_menu_VtimeSet, switchdec.trigger());
-    mainState.nextStepConditional(SysState_setup_resetCounterConfirm, switchset.trigger());
+    mainState.nextStepConditional(SysState_display_VTime, switchset.trigger());
     break;
 
 #else
@@ -411,6 +412,7 @@ void mainStatemachine()
   case SysState_setup_time:
     if (mainState.doOnce())
     {
+      debugln(F("preparing time setup"));
       secondayState.reset(0, 8);
       rtctimecurrent = Rtc.GetDateTime();
     }
@@ -436,6 +438,7 @@ void mainStatemachine()
   case SysState_display_time:
     if (mainState.doOnce())
     {
+      debugln(F("preparing time display"));
       secondayState.reset(0, 6);
     }
     displayTime(Rtc.GetDateTime());
@@ -525,9 +528,9 @@ void updatedisplay(const char *updateString, byte updateDots)
   digitalWrite(dpClk, false);
   digitalWrite(dpData, false);
 
-  debugln(F("Display update ------------"));
-  debug(F("string written to registers : "));
-  debugln(updateString);
+  // debugln(F("Display update ------------"));
+  // debug(F("string written to registers : "));
+  // debugln(updateString);
 
   int len = 0;
   for (; updateString[len] != '\0'; len++)
@@ -698,7 +701,13 @@ void switchhandler()
   switchset.scan();
   switchinc.scan();
   switchdec.scan();
-  powerTimeout.resetTimer();
+
+  if (powerTimeout.out) // when the timer ran out, the CPU should be sleeping
+  {
+    debugln(F("Waking up"));
+    disableSleep();
+    powerTimeout.resetTimer();
+  }
 }
 
 void calcAndDisplayTimeSinceIncident()
@@ -713,11 +722,7 @@ void calcAndDisplayTimeSinceIncident()
                      rtctimecurrent.TotalDays() - rtctimeVfree.TotalDays(),
                      mainState.activeStep == SysState_idleLocked ? 0 : 1);
 
-    debug(F("days passed rtc : "));
-    debugln(rtctimecurrent.TotalDays());
-    debug(F("days passed Vfree : "));
-    debugln(rtctimeVfree.TotalDays());
-    debug(F(" = "));
+    debug(F("Days since a Velociraptor incident: "));
     debugln(rtctimecurrent.TotalDays() - rtctimeVfree.TotalDays());
 
     secondOfDayOfLastDisplayUpdate = rtctimecurrent.Second() +
@@ -911,8 +916,11 @@ bool setCurrentTime(RtcDateTime &timeToEdit)
   static uint8_t monthtemp = 0; // local variable for the setting the months because it cant be set directly via incrementaion of seconds
   static uint16_t yeartemp = 0; // local variable for the setting the Years because it cant be set directly via incrementaion of seconds
 
-  if ((secondayState.doOnce()) || (switchinc.trigger()) || (switchdec.trigger()))
+  if (secondayState.doOnce() || switchinc.trigger() || switchdec.trigger())
   {
+    debug(F("Timesetting Step : "));
+    debugln(secondayState.activeStep);
+
     switch (secondayState.activeStep)
     {
     case 0: // init variables
@@ -1008,6 +1016,7 @@ bool setCurrentTime(RtcDateTime &timeToEdit)
       break;
 
     case 7: // write time and go to menu
+    {
       RtcDateTime placeholder(yeartemp,
                               monthtemp,
                               timeToEdit.Day(),
@@ -1032,7 +1041,7 @@ bool setCurrentTime(RtcDateTime &timeToEdit)
         mainState.nextStep(SysState_fault);
       }
       break;
-
+    }
     default:
       debugln(F("unknown step in time setting"));
       secondayState.nextStep(0);
@@ -1067,27 +1076,36 @@ int getSensorValue()
   return smoothedvalue > 1024 ? 1024 : smoothedvalue; // clamp value
 }
 
-void sprintfToDisplay(const char *baseStr, int value, byte updateDots)
+void sprintfToDisplay(const char *baseStr, unsigned int value, byte updateDots)
 {
+  debugln(F("SPRINTF Called"));
+  // debug(F("Inputstring is : "));
+  // debugln(baseStr);
+  // debug(F("Value : ")); 
+  // debugln(value);
+  
   char buffer[] = {'\0', '\0', '\0', '\0', '\0'};
-  int i = 0;
+  unsigned int i = 0;
   if (baseStr == NULL)
   {
     debugln(F("baseStr is NULL"));
     errorcode |= error_Nullpointer;
     mainState.nextStep(SysState_fault);
     return;
-  }
-  while (baseStr[i++] != '\0')
+  } 
+  while (baseStr[3-i] != '\0')
   {
-    buffer[i] = baseStr[i];
+    buffer[3-i] = baseStr[3-i];
     if (value != 0 || i == 0)
     { // if the value is 0, the first should still be written
-      buffer[i] = value % 10 + '0';
+      buffer[3-i] = value % 10 + '0';
       value /= 10;
     }
     i++;
-  };
+  }
+  // debug(F("Updating Display with : "));
+  // debugln(buffer);
+
   updatedisplay(buffer, updateDots);
 }
 
@@ -1149,10 +1167,10 @@ void printDateTime(const RtcDateTime &dt)
 }
 #endif
 
-bool twoSwitchesHeldForTime(Button &button1, Button &Button2)
+bool twoSwitchesHeldForTime(Button &button1, Button &button2)
 {
   static STimer holdTimer{STimer_State_TON, 5000};
-  if (button1.buttonStatus && button1.buttonStatus)
+  if (button1.buttonStatus && button2.buttonStatus)
   {
     holdTimer.call();
     if (holdTimer.out)
