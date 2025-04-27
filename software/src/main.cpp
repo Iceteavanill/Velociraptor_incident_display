@@ -15,11 +15,9 @@ This project uses the RTC library by Michael Miller TODO : add the rest! (interr
 #include <Button.h>
 #include <PinChangeInterrupt.h>
 #include <STimer.h>
-// #include "avr8-stub.h"
 #include <StateController.h>
 // Timer Setup
 #define USE_TIMER_2 true
-#define USE_TIMER_1 true
 #include <TimerInterrupt.h>
 
 #include "setup.h"
@@ -32,8 +30,9 @@ void displayAccordingToState(unsigned int step);               // sets display a
 int getSensorValue();                                          // get the sensor value (smoothed)
 void calcAndDisplayTimeSinceIncident();                        // calculate the default display
 void sprintfToDisplay(const char *baseStr, int value, byte updateDots);
-void displayTime(const RtcDateTime &dt); // display the time that is given
+void displayTime(const RtcDateTime &dt); // display the time of a specified RtcDateTime object
 bool twoSwitchesHeldForTime(Button &button1, Button &Button2);
+bool setCurrentTime(RtcDateTime &timeToEdit); // set the time of a specified RtcDateTime object
 
 // ISR
 void switchhandler(); // inputs from the switches and debounces them
@@ -45,7 +44,6 @@ void inline resolveAndDisplayError();    // resolve and display errors
 void inline brightnessCalibrationStp1(); // display calibration step 1
 void inline brightnessCalibrationStp2(); // display calibration step 2
 void inline displayCalibrationData();    // display calibration step 3
-void inline setCurrentTime();            // set the time
 
 #if DEBUG == 1 // this function is only used for debuging
 void printDateTime(const RtcDateTime &dt);
@@ -57,6 +55,9 @@ RtcDS1307<TwoWire> Rtc(Wire); // setup for the RTC
 int brightnessoffset = 0;  // offset for led brightness (should be negative, typically it is zero)
 int brightnessscaling = 4; // scaling for brightness (should be between 1 and 10, typically it is 4)
 
+unsigned long secondOfDayOfLastDisplayUpdate = 0; // seconds since the beginning of the day when the Displayed time was last updated
+unsigned long millisOnDisplayUpdate = 0;          // millis that were read on display update
+
 Button switchset{sSet}; // buttoninstance for the setswitch
 Button switchinc{sInc}; // buttoninstance for the incswitch
 Button switchdec{sDec}; // buttoninstance for the decswitch
@@ -64,8 +65,8 @@ Button switchdec{sDec}; // buttoninstance for the decswitch
 byte errorcode = 0;        // contains a error code if one is triggered
 byte errorIsDisplayed = 0; // contains the last error that was displayed
 
-STimer tON{STimer_State_TON, 5000};          // timer that is used for simple delay during interactions (error display, wait for button push)
-STimer powerTimeout{STimer_State_TON, 5000}; // timer to stay active for a while and then go to sleep
+STimer tON{STimer_State_TON, 5000};           // timer that is used for simple delay during interactions (error display, wait for button push)
+STimer powerTimeout{STimer_State_TON, 15000}; // timer to stay active for a while and then go to sleep
 
 StateController mainState{SysState_noInit, &displayAccordingToState}; // main statemachine manager
 StateController secondayState{0};                                     // secondary statemachine manager for nested states. Mainly display states
@@ -280,6 +281,11 @@ void mainStatemachine()
     {
       powerTimeout.call();
       calcAndDisplayTimeSinceIncident();
+      if (powerTimeout.out)
+      {
+        debugln(F("Going to sleep"));
+        enableSleep();
+      }
     }
 
     mainState.nextStepConditional(SysState_menu_Main, switchset.trigger());
@@ -292,8 +298,21 @@ void mainStatemachine()
     break;
 
   case SysState_idleLocked: // ------------------- locked state -------------------
-
-    // insert unlocked stuff
+    if (mainState.doOnce())
+    {
+      powerTimeout.resetTimer();
+      secondayState.reset(0, 3);
+    }
+    else
+    {
+      powerTimeout.call();
+      calcAndDisplayTimeSinceIncident();
+      if (powerTimeout.out)
+      {
+        debugln(F("Going to sleep"));
+        enableSleep();
+      }
+    }
 
     if (twoSwitchesHeldForTime(switchdec, switchinc))
     {
@@ -332,11 +351,36 @@ void mainStatemachine()
     mainState.nextStepConditional(SysState_display_time, switchset.trigger());
     break;
 
+#if DEBUG == 1 // dsiplay set Vtime
+
+  case SysState_menu_resetCounter:
+    mainState.nextStepConditional(SysState_menu_VtimeSet, switchinc.trigger());
+    mainState.nextStepConditional(SysState_menu_displayTime, switchdec.trigger());
+    mainState.nextStepConditional(SysState_setup_resetCounterConfirm, switchset.trigger());
+    break;
+
+  case SysState_menu_VtimeSet:
+
+    mainState.nextStepConditional(SysState_menu_displayVTime, switchinc.trigger());
+    mainState.nextStepConditional(SysState_menu_resetCounter, switchdec.trigger());
+    mainState.nextStepConditional(SysState_setup_resetCounterConfirm, switchset.trigger());
+    break;
+
+  case SysState_menu_displayVTime:
+
+    mainState.nextStepConditional(SysState_menu_Main, switchinc.trigger());
+    mainState.nextStepConditional(SysState_menu_VtimeSet, switchdec.trigger());
+    mainState.nextStepConditional(SysState_setup_resetCounterConfirm, switchset.trigger());
+    break;
+
+#else
   case SysState_menu_resetCounter:
     mainState.nextStepConditional(SysState_menu_Main, switchinc.trigger());
     mainState.nextStepConditional(SysState_menu_displayTime, switchdec.trigger());
     mainState.nextStepConditional(SysState_setup_resetCounterConfirm, switchset.trigger());
     break;
+
+#endif
 
   case SysState_setup_calibrationStp1:
     if (switchset.trigger()) // do step 1 of brighness calibration
@@ -368,8 +412,25 @@ void mainStatemachine()
     if (mainState.doOnce())
     {
       secondayState.reset(0, 8);
+      rtctimecurrent = Rtc.GetDateTime();
     }
-    setCurrentTime();
+    if (setCurrentTime(rtctimecurrent))
+    {
+      Rtc.SetDateTime(rtctimecurrent);
+      mainState.nextStep(SysState_idleUnlocked);
+    }
+    break;
+
+  case SysState_setup_VTime:
+    if (mainState.doOnce())
+    {
+      secondayState.reset(0, 8);
+    }
+    if (setCurrentTime(rtctimeVfree))
+    {
+      EEPROM.put(EEPOMadrStarttime, rtctimeVfree); // write time to EEPROM
+      mainState.nextStep(SysState_idleUnlocked);
+    }
     break;
 
   case SysState_display_time:
@@ -378,6 +439,15 @@ void mainStatemachine()
       secondayState.reset(0, 6);
     }
     displayTime(Rtc.GetDateTime());
+    mainState.nextStepConditional(SysState_menu_displayTime, switchset.trigger());
+    break;
+
+  case SysState_display_VTime:
+    if (mainState.doOnce())
+    {
+      secondayState.reset(0, 6);
+    }
+    displayTime(rtctimeVfree);
     mainState.nextStepConditional(SysState_menu_displayTime, switchset.trigger());
     break;
 
@@ -625,11 +695,10 @@ void setbrightness()
 
 void switchhandler()
 {
-  // debug(F("Switch change detected :"));
-  // debugln(millis());
   switchset.scan();
   switchinc.scan();
   switchdec.scan();
+  powerTimeout.resetTimer();
 }
 
 void calcAndDisplayTimeSinceIncident()
@@ -640,60 +709,40 @@ void calcAndDisplayTimeSinceIncident()
   default:
     // device has switched from some other task to this. Read RTC and init timer for sleep reactivation
     rtctimecurrent = Rtc.GetDateTime();
-    int dayspassed = rtctimecurrent.TotalDays() - rtctimeVfree.TotalDays();
-    sprintfToDisplay("    ", dayspassed, mainState.activeStep == SysState_idleLocked ? 0 : 1);
+    sprintfToDisplay("    ",
+                     rtctimecurrent.TotalDays() - rtctimeVfree.TotalDays(),
+                     mainState.activeStep == SysState_idleLocked ? 0 : 1);
 
     debug(F("days passed rtc : "));
     debugln(rtctimecurrent.TotalDays());
     debug(F("days passed Vfree : "));
     debugln(rtctimeVfree.TotalDays());
     debug(F(" = "));
-    debugln(dayspassed);
+    debugln(rtctimecurrent.TotalDays() - rtctimeVfree.TotalDays());
+
+    secondOfDayOfLastDisplayUpdate = rtctimecurrent.Second() +
+                                     rtctimecurrent.Minute() * 60 +
+                                     rtctimecurrent.Hour() * 3600;
+
+    millisOnDisplayUpdate = millis();
 
     secondayState.incrementStep(true);
+    break;
+
+  case 1: // wait until midnight
+    secondayState.incrementStep(secondOfDayOfLastDisplayUpdate + ((millis() - millisOnDisplayUpdate) / 1000) >= 86400);
 
     break;
 
-  case 1:
-    ;
-    break;
-
-  case 2:
-
+  case 2:                              // read RTC to sync time and check for time (should only happen once as long as it is not too inacurate)
+    if (Rtc.GetDateTime().Hour() == 0) // if hour ticked over, its a new day ->
+    {
+      secondayState.nextStep(0);
+    }
     break;
   }
 
   return;
-  /*
-  static unsigned long secondsofday;  // seconds until it is midnight maximum is 86400
-  static unsigned long lastmilisread; // timer to reduce RTC reads. the RTC gets read only
-  static uint16_t dayspassed;         // the count of days passed
-  static uint16_t dayspassedlast;     // count of days comparrison
-  if (
-      (86370 <= (secondsofday + ((millis() - lastmilisread) / 1000))) ||
-      (30 >= (secondsofday + ((millis() - lastmilisread) / 1000)))) // when the time until midnight is within 30 seconds the RTC time gets read (I try to not read the RTC too much)
-  {
-
-    rtctimecurrent = Rtc.GetDateTime();
-    dayspassed = rtctimecurrent.TotalDays() - rtctimeVfree.TotalDays();
-    secondsofday = (long(rtctimecurrent.Hour()) * 3600) + (long(rtctimecurrent.Minute()) * 60) + long(rtctimecurrent.Second());
-    lastmilisread = millis();
-
-    debug(F("seconds of the day : "));
-    debugln(secondsofday);
-    debug(F("days passed rtc : "));
-    debugln(rtctimecurrent.TotalDays());
-    debug(F("days passed Vfree : "));
-    debugln(rtctimeVfree.TotalDays());
-  }
-
-  if ((dayspassed != dayspassedlast))
-  {
-    debugln(F("displaying days passed"));
-    dayspassedlast = dayspassed;
-
-    sprintfToDisplay("    ", dayspassed, mainState.activeStep == SysState_idleLocked ? 0 : 1);
-  }*/
 }
 
 void displayAccordingToState(unsigned int step)
@@ -857,7 +906,7 @@ void displayCalibrationData()
   secondayState.decrementStep(switchdec.trigger());
 }
 
-void setCurrentTime()
+bool setCurrentTime(RtcDateTime &timeToEdit)
 {
   static uint8_t monthtemp = 0; // local variable for the setting the months because it cant be set directly via incrementaion of seconds
   static uint16_t yeartemp = 0; // local variable for the setting the Years because it cant be set directly via incrementaion of seconds
@@ -866,10 +915,9 @@ void setCurrentTime()
   {
     switch (secondayState.activeStep)
     {
-    case 0:                               // init variables
-      rtctimecurrent = Rtc.GetDateTime(); // at the start read the present time
-      yeartemp = rtctimecurrent.Year();
-      monthtemp = rtctimecurrent.Month();
+    case 0: // init variables
+      yeartemp = timeToEdit.Year();
+      monthtemp = timeToEdit.Month();
       secondayState.nextStep(1);
       break;
 
@@ -888,11 +936,25 @@ void setCurrentTime()
     case 2: // set Month
       if (switchinc.buttonStatus)
       {
-        monthtemp = monthtemp >= 12 ? 1 : monthtemp++;
+        if (monthtemp >= 12)
+        {
+          monthtemp = 1;
+        }
+        else
+        {
+          monthtemp++;
+        }
       }
       else if (switchdec.buttonStatus)
       {
-        monthtemp = monthtemp < 1 ? 12 : monthtemp--;
+        if (monthtemp <= 1)
+        {
+          monthtemp = 12;
+        }
+        else
+        {
+          monthtemp--;
+        }
       }
       sprintfToDisplay("mm  ", monthtemp, B0001);
       break;
@@ -900,71 +962,68 @@ void setCurrentTime()
     case 3: // set Day
       if (switchinc.buttonStatus)
       {
-        rtctimecurrent += uint32_t(86400); // increment the time one day
+        timeToEdit += uint32_t(86400); // increment the time one day
       }
       else if (switchdec.buttonStatus)
       {
-        rtctimecurrent -= 86400; // decrement the time one day
+        timeToEdit -= 86400; // decrement the time one day
       }
-      sprintfToDisplay("dd  ", rtctimecurrent.Day(), B0010);
+      sprintfToDisplay("dd  ", timeToEdit.Day(), B0010);
       break;
 
     case 4: // set Hour
       if (switchinc.buttonStatus)
       {
-        rtctimecurrent += uint32_t(3600); // increment the time one hour
+        timeToEdit += uint32_t(3600); // increment the time one hour
       }
       else if (switchdec.buttonStatus)
       {
-        rtctimecurrent -= 3600; // decrement the time one hour
+        timeToEdit -= 3600; // decrement the time one hour
       }
-      sprintfToDisplay("hh  ", rtctimecurrent.Hour(), B0100);
+      sprintfToDisplay("hh  ", timeToEdit.Hour(), B0100);
       break;
 
     case 5: // set minute
       if (switchinc.buttonStatus)
       {
-        rtctimecurrent += uint32_t(60); // increment the time one minute
+        timeToEdit += uint32_t(60); // increment the time one minute
       }
       else if (switchdec.buttonStatus)
       {
-        rtctimecurrent -= 60; // decrement the time one minute
+        timeToEdit -= 60; // decrement the time one minute
       }
-      sprintfToDisplay("mm  ", rtctimecurrent.Minute(), B1000);
+      sprintfToDisplay("mm  ", timeToEdit.Minute(), B1000);
       break;
 
     case 6: // set Seconds
       if (switchinc.buttonStatus)
       {
-        rtctimecurrent += uint32_t(1); // increment the time one Second
+        timeToEdit += uint32_t(1); // increment the time one Second
       }
       else if (switchdec.buttonStatus)
       {
-        rtctimecurrent -= 1; // decrement the time one Second
+        timeToEdit -= 1; // decrement the time one Second
       }
-      sprintfToDisplay("ss  ", rtctimecurrent.Second(), B0011);
+      sprintfToDisplay("ss  ", timeToEdit.Second(), B0011);
       break;
 
-    case 7:                             // write time and go to menu
-    {                                   // explicit case here because placeholder crosses initialization
-      RtcDateTime placeholder(yeartemp, // the
+    case 7: // write time and go to menu
+      RtcDateTime placeholder(yeartemp,
                               monthtemp,
-                              rtctimecurrent.Day(),
-                              rtctimecurrent.Hour(),
-                              rtctimecurrent.Minute(),
-                              rtctimecurrent.Second());
+                              timeToEdit.Day(),
+                              timeToEdit.Hour(),
+                              timeToEdit.Minute(),
+                              timeToEdit.Second());
 
       if (placeholder.IsValid() && !(yeartemp <= 2000)) // check
       {
 #if DEBUG == 1
         debug(F("The time was set to : "));
-        printDateTime(rtctimecurrent);
+        printDateTime(timeToEdit);
 #endif
 
-        Rtc.SetDateTime(placeholder); // write the time to the RTC if the time is valid
-        rtctimecurrent = placeholder;
-
-        mainState.nextStep(SysState_idleUnlocked);
+        timeToEdit = placeholder;
+        return true; // time setting is completed.
       }
       else
       {
@@ -972,8 +1031,7 @@ void setCurrentTime()
         errorcode = B00010000;
         mainState.nextStep(SysState_fault);
       }
-    }
-    break;
+      break;
 
     default:
       debugln(F("unknown step in time setting"));
@@ -986,6 +1044,7 @@ void setCurrentTime()
   }
 
   secondayState.incrementStep(switchset.trigger());
+  return false; // always return false until time setting is completed
 }
 
 int getSensorValue()
@@ -1110,7 +1169,17 @@ bool twoSwitchesHeldForTime(Button &button1, Button &Button2)
   }
 }
 
-void periodicTasks(){
+void periodicTasks()
+{
   setbrightness();
-  
+
+  if (powerTimeout.out) // when the timer ran out, the CPU should be sleeping
+  {
+    if (secondOfDayOfLastDisplayUpdate + ((millis() - millisOnDisplayUpdate) / 1000) >= 86395) // check if the time is close to midnight(within 5 seconds)
+    {
+      debugln(F("Waking up"));
+      disableSleep();
+      powerTimeout.resetTimer();
+    }
+  }
 }
