@@ -233,6 +233,8 @@ void setup()
   ITimer2.init();
   ITimer2.attachInterruptInterval(calltime, periodicTasks, 0); // start automatic brightness adjustment
 
+  sleepMode(SLEEP_MODE_IDLE);
+
   // Init completed
   debugln(F("------------------- Initialized -------------------"));
 }
@@ -274,7 +276,6 @@ void mainStatemachine()
   case SysState_idleUnlocked: // ------------------- default state -------------------
     if (mainState.doOnce())
     {
-      debugln(F("Resetting timer"));
       powerTimeout.resetTimer();
       secondayState.reset(0, 3);
     }
@@ -285,7 +286,9 @@ void mainStatemachine()
       if (powerTimeout.out)
       {
         debugln(F("Going to sleep"));
-        sleep();
+        enableSleep();
+        startSleep();
+        disableSleep();
       }
     }
 
@@ -312,6 +315,8 @@ void mainStatemachine()
       {
         debugln(F("Going to sleep"));
         enableSleep();
+        startSleep();
+        disableSleep();
       }
     }
 
@@ -705,7 +710,7 @@ void switchhandler()
   if (powerTimeout.out) // when the timer ran out, the CPU should be sleeping
   {
     debugln(F("Waking up"));
-    disableSleep();
+    sleep_disable();
     powerTimeout.resetTimer();
   }
 }
@@ -725,9 +730,9 @@ void calcAndDisplayTimeSinceIncident()
     debug(F("Days since a Velociraptor incident: "));
     debugln(rtctimecurrent.TotalDays() - rtctimeVfree.TotalDays());
 
-    secondOfDayOfLastDisplayUpdate = rtctimecurrent.Second() +
-                                     rtctimecurrent.Minute() * 60 +
-                                     rtctimecurrent.Hour() * 3600;
+    secondOfDayOfLastDisplayUpdate = long(rtctimecurrent.Second()) +
+                                     long(rtctimecurrent.Minute()) * 60 +
+                                     long(rtctimecurrent.Hour()) * 3600;
 
     millisOnDisplayUpdate = millis();
 
@@ -1081,9 +1086,9 @@ void sprintfToDisplay(const char *baseStr, unsigned int value, byte updateDots)
   debugln(F("SPRINTF Called"));
   // debug(F("Inputstring is : "));
   // debugln(baseStr);
-  // debug(F("Value : ")); 
+  // debug(F("Value : "));
   // debugln(value);
-  
+
   char buffer[] = {'\0', '\0', '\0', '\0', '\0'};
   unsigned int i = 0;
   if (baseStr == NULL)
@@ -1092,13 +1097,13 @@ void sprintfToDisplay(const char *baseStr, unsigned int value, byte updateDots)
     errorcode |= error_Nullpointer;
     mainState.nextStep(SysState_fault);
     return;
-  } 
-  while (baseStr[3-i] != '\0')
+  }
+  while (baseStr[3 - i] != '\0')
   {
-    buffer[3-i] = baseStr[3-i];
+    buffer[3 - i] = baseStr[3 - i];
     if (value != 0 || i == 0)
     { // if the value is 0, the first should still be written
-      buffer[3-i] = value % 10 + '0';
+      buffer[3 - i] = value % 10 + '0';
       value /= 10;
     }
     i++;
