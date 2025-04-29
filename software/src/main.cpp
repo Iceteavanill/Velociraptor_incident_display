@@ -24,21 +24,129 @@ This project uses the RTC library by Michael Miller TODO : add the rest! (interr
 
 // functions
 // helperfunctions
-void updatedisplay(const char *updateString, byte updateDots); // manages the displaying of characters
-void setbrightness();                                          // set brightness for the display
-void displayAccordingToState(unsigned int step);               // sets display according to the state
-int getSensorValue();                                          // get the sensor value (smoothed)
-void calcAndDisplayTimeSinceIncident();                        // calculate the default display
-void sprintfToDisplay(const char *baseStr, unsigned int value, byte updateDots);
-void displayTime(const RtcDateTime &dt); // display the time of a specified RtcDateTime object
+
+/**
+ * @brief Manages the displaying of characters
+ *
+ * The provided string and bytes are displayed on the 7-segment displays.
+ * This function handles the conversion of characters to bit representation and shifting out of the bytes to the shift registers.
+ * If a nullpointer is provided as a argument for the string, the function returns instantly.
+ * 
+ * @param updateString const char * String to be displayed. Only the first 4 chars are interpreted
+ * 
+ * @param updateDots byte Dots that should be displayed (interpreted bitwise)
+ *
+ */
+void updatedisplay(const char *updateString, byte updateDots);
+
+/**
+ * @brief set brightness for the display
+ *
+ * Sets the brighness of the 7-segment displays. 
+ * The function calls getSensorValue, offsets and scales it according to calibration.
+ * This function uses analogWrite. Therfore it occupies timer 1 of the atmega.
+ * 
+ */
+void setbrightness();
+
+/**
+ * @brief sets display according to the state
+ *
+ * This function is used as a action for a statechange.
+ * It allows for automatic display of a default string and dots according to the ones stored in defaultDisplaysStr and defaultDisplaysByte.
+ * It simply calls updatedisplay according to the provided step.
+ * 
+ * @param step unsigned int of the current active step
+ * 
+ */
+void displayAccordingToState(unsigned int step);
+
+/**
+ * @brief get the light sensor value (smoothed)
+ *
+ * This function reads the current light level and keeps a moving average of the last 10 reading.
+ * 
+ * @return int smoothed sensor value (average of 10 readings)
+ *  
+ */
+int getSensorValue();
+
+/**
+ * @brief calculates displays the days since last incident
+ * 
+ * This function manages the displaying of the time since the last Velociraptor incident.
+ * It also handles the transition of the new number (which happens at midnight)
+ * 
+ */
+void calcAndDisplayTimeSinceIncident();
+
+/**
+ * @brief This is a simple (and probably bad) implentation of sprintf
+ * 
+ * This function was manly done because using the default Sprintf was using a lot of memory.
+ * It takes a default string and writes a number on top of it(if ther is any number that overrides the string). 
+ * A zero is always written. 
+ * If a nullpointer is provided, it generates a error.
+ * 
+ * @param baseStr const char * to a base String that gets overridden(dont provide a nullpointer)
+ * 
+ * @param value uint16_t value that is printet over the defaultstring
+ * 
+ * @param updateDots byte of dots that should be displayed (get passed through).
+ * 
+ */
+void sprintfToDisplay(const char *baseStr, uint16_t value, byte updateDots);
+
+/**
+ * @brief display the time of a specified RtcDateTime object
+ * 
+ * This function provides a menu for displaying any RtcDateTime object.
+ * Pressing the inc and dec button allows switching between the different steps.
+ * It allows for realtime updating of the seconds.
+ * This function needs the secondary state to be setup with 6 states (secondayState.reset(0, 6))
+ * 
+ * @param dt const RtcDateTime& that should be displayed
+ * 
+ */
+void displayTime(const RtcDateTime &dt);
+
+/**
+ * @brief check for two switches to be held for 5 seconds
+ * 
+ * Takes 2 button objects as input and checks if both have been held for 5 seconds simultaneously.
+ * It that happens, the functions returns true. Any time else it returns false.
+ * After a true output it resets its internal timer and continues from the beginning.
+ * 
+ * @param button1 Button object that gets read for a true output.
+ * 
+ * @param button2 Button object that gets read for a true output.
+ * 
+ * @return bool that returns true once after the button has been held.
+ * 
+ */
 bool twoSwitchesHeldForTime(Button &button1, Button &button2);
-bool setCurrentTime(RtcDateTime &timeToEdit); // set the time of a specified RtcDateTime object
+
+/**
+ * @brief set the time of a specified RtcDateTime object
+ * 
+ * This function provides a menu to edit a RtcDateTime object.
+ * Pressing inc and dec manipulates a the current value.
+ * pressing set goes to the next step.
+ * When the last step is completed, the function returns true anytime else, it returns false.
+ * This is for saving the value somewhere (eeprom or RTC) 
+ * 
+ * @param timeToEdit RtcDateTime& object that gets edited
+ * 
+ * @return bool true once after the last step has been completed
+ * 
+ */
+bool setCurrentTime(RtcDateTime &timeToEdit);
 
 // ISR
 void switchhandler(); // inputs from the switches and debounces them
 void periodicTasks(); // functions that should be called periodically are called here
 
-// main state dunctions
+// main state functions
 void inline mainStatemachine();          // main statemachine
 void inline resolveAndDisplayError();    // resolve and display errors
 void inline brightnessCalibrationStp1(); // display calibration step 1
@@ -164,10 +272,9 @@ void setup()
 
   digitalWrite(dplight, 255); // set the display to full brighness (in case anything else does not work)
 
-  Wire.begin();           // start I2C for RTC
-  Wire.setTimeout(10000); // set timeout
-  Rtc.Begin();            // start RTC
-
+  Wire.begin();            // start I2C for RTC
+  Wire.setTimeout(10000);  // set timeout
+  Rtc.Begin();             // start RTC
   if (!Rtc.GetIsRunning()) // check if RTC is running and set to run if not
   {
     Rtc.SetIsRunning(true);
@@ -533,17 +640,14 @@ void updatedisplay(const char *updateString, byte updateDots)
   digitalWrite(dpClk, false);
   digitalWrite(dpData, false);
 
-  // debugln(F("Display update ------------"));
-  // debug(F("string written to registers : "));
-  // debugln(updateString);
-
+  // find end of string
   int len = 0;
   for (; updateString[len] != '\0'; len++)
     ;
 
   len--;
   for (; len >= 0; len--)
-  {
+  { // loop through string from the back
 
     switch (updateString[len])
     {
@@ -628,6 +732,9 @@ void updatedisplay(const char *updateString, byte updateDots)
     case 'u':
       dataforshift = B11000010;
       break;
+    case 'v':
+      dataforshift = B11000010;
+      break;
     case 'y':
       dataforshift = B01110110;
       break;
@@ -650,13 +757,6 @@ void updatedisplay(const char *updateString, byte updateDots)
     updateDots >>= 1;
 
     shiftOut(dpData, dpClk, MSBFIRST, dataforshift);
-
-    //     debug(F("Byte "));
-    //     debug(len);
-    //     debug(F(" : "));
-    // #if DEBUG == 1
-    //     Serial.println(dataforshift, BIN);
-    // #endif
   }
 
   // display the writen characters
@@ -689,16 +789,6 @@ void setbrightness()
 #endif
 
   analogWrite(dplight, brightnesstowrite > 255 ? 255 : brightnesstowrite); // set the brightness
-
-  // #if DEBUG == 1 // only print the Brighnessvalue every 5 seconds to not spam the Serial port
-  //   static long timeforbrighness;
-  //   if (millis() - timeforbrighness >= 5000)
-  //   {
-  //     timeforbrighness = millis();
-  //     debug(F("brightness set to "));
-  //     debugln(brightnesstowrite);
-  //   }
-  // #endif
 }
 
 void switchhandler()
@@ -723,12 +813,10 @@ void calcAndDisplayTimeSinceIncident()
   default:
     // device has switched from some other task to this. Read RTC and init timer for sleep reactivation
     rtctimecurrent = Rtc.GetDateTime();
+
     sprintfToDisplay("    ",
                      rtctimecurrent.TotalDays() - rtctimeVfree.TotalDays(),
                      mainState.activeStep == SysState_idleLocked ? 0 : 1);
-
-    debug(F("Days since a Velociraptor incident: "));
-    debugln(rtctimecurrent.TotalDays() - rtctimeVfree.TotalDays());
 
     secondOfDayOfLastDisplayUpdate = long(rtctimecurrent.Second()) +
                                      long(rtctimecurrent.Minute()) * 60 +
@@ -1064,7 +1152,7 @@ bool setCurrentTime(RtcDateTime &timeToEdit)
 int getSensorValue()
 {
   static int sensvalues[10];
-  static byte sensindex;
+  static byte sensindex = 0;
   sensvalues[sensindex] = analogRead(aSiglight);
   sensindex++;
 
@@ -1081,13 +1169,9 @@ int getSensorValue()
   return smoothedvalue > 1024 ? 1024 : smoothedvalue; // clamp value
 }
 
-void sprintfToDisplay(const char *baseStr, unsigned int value, byte updateDots)
+void sprintfToDisplay(const char *baseStr, uint16_t value, byte updateDots)
 {
   debugln(F("SPRINTF Called"));
-  // debug(F("Inputstring is : "));
-  // debugln(baseStr);
-  // debug(F("Value : "));
-  // debugln(value);
 
   char buffer[] = {'\0', '\0', '\0', '\0', '\0'};
   unsigned int i = 0;
@@ -1108,8 +1192,6 @@ void sprintfToDisplay(const char *baseStr, unsigned int value, byte updateDots)
     }
     i++;
   }
-  // debug(F("Updating Display with : "));
-  // debugln(buffer);
 
   updatedisplay(buffer, updateDots);
 }
@@ -1118,7 +1200,6 @@ void displayTime(const RtcDateTime &dt)
 {
   if ((secondayState.doOnce()) || secondayState.activeStep == 5) // bypass do once to keep getting new data because seconds may change
   {
-    rtctimecurrent = Rtc.GetDateTime(); // refetch current time (it might have changed)
     switch (secondayState.activeStep)
     {
     case 0: // display Year
