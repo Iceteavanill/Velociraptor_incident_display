@@ -1,8 +1,8 @@
 /*
-This software was written by Iceteavanill for the Velociraptor Project.
+This software was written by Iceteavanill for the Velociraptor incident Project.
 It is provided as is with no liability for anything this software may or may not be the cause of.
 For more information check the github readme.
-This project uses the RTC library by Michael Miller TODO : add the rest! (interrupt & timer)
+This project uses the RTC library by Michael Miller, PinChangeInterrupt library by NicoHood and the TimerInterrupt library khoih-prog
 */
 
 // libraries used
@@ -206,7 +206,7 @@ void inline displayCalibrationData(); // display calibration step 3
 void printDateTime(const RtcDateTime &dt);
 #endif
 
-RtcDS1307<TwoWire> Rtc(Wire); // setup for the RTC
+RtcDS1307<TwoWire> Rtc(Wire); // RTC instance
 
 // global variables
 int brightnessoffset = 0;  // offset for led brightness (should be negative, typically it is zero)

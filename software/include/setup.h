@@ -87,8 +87,8 @@ enum errorstate // binary error codes, that way all can be active at the same ti
 
 // Default Strings to display when entering a specific systemstate
 // nullptr signifies no default setting needed / used
-// using PROGMEM here to store the Strings on the FLASH excusively does not work. Not testet further 
-const char * const defaultDisplaysStr[] =
+// using PROGMEM here to store the Strings on the FLASH excusively does not work. Not testet further
+const char *const defaultDisplaysStr[] =
     {
         "ini ",  // SysState_noInit
         "err ",  // SysState_fault
