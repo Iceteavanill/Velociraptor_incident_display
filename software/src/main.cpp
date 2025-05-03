@@ -23,6 +23,7 @@ This project uses the RTC library by Michael Miller TODO : add the rest! (interr
 #include "setup.h"
 
 // functions
+
 // helperfunctions
 
 /**
@@ -31,9 +32,9 @@ This project uses the RTC library by Michael Miller TODO : add the rest! (interr
  * The provided string and bytes are displayed on the 7-segment displays.
  * This function handles the conversion of characters to bit representation and shifting out of the bytes to the shift registers.
  * If a nullpointer is provided as a argument for the string, the function returns instantly.
- * 
+ *
  * @param updateString const char * String to be displayed. Only the first 4 chars are interpreted
- * 
+ *
  * @param updateDots byte Dots that should be displayed (interpreted bitwise)
  *
  */
@@ -42,10 +43,10 @@ void updatedisplay(const char *updateString, byte updateDots);
 /**
  * @brief set brightness for the display
  *
- * Sets the brighness of the 7-segment displays. 
+ * Sets the brighness of the 7-segment displays.
  * The function calls getSensorValue, offsets and scales it according to calibration.
  * This function uses analogWrite. Therfore it occupies timer 1 of the atmega.
- * 
+ *
  */
 void setbrightness();
 
@@ -55,9 +56,9 @@ void setbrightness();
  * This function is used as a action for a statechange.
  * It allows for automatic display of a default string and dots according to the ones stored in defaultDisplaysStr and defaultDisplaysByte.
  * It simply calls updatedisplay according to the provided step.
- * 
+ *
  * @param step unsigned int of the current active step
- * 
+ *
  */
 void displayAccordingToState(unsigned int step);
 
@@ -65,93 +66,141 @@ void displayAccordingToState(unsigned int step);
  * @brief get the light sensor value (smoothed)
  *
  * This function reads the current light level and keeps a moving average of the last 10 reading.
- * 
+ *
  * @return int smoothed sensor value (average of 10 readings)
- *  
+ *
  */
 int getSensorValue();
 
 /**
  * @brief calculates displays the days since last incident
- * 
+ *
  * This function manages the displaying of the time since the last Velociraptor incident.
  * It also handles the transition of the new number (which happens at midnight)
- * 
+ *
  */
 void calcAndDisplayTimeSinceIncident();
 
 /**
  * @brief This is a simple (and probably bad) implentation of sprintf
- * 
+ *
  * This function was manly done because using the default Sprintf was using a lot of memory.
- * It takes a default string and writes a number on top of it(if ther is any number that overrides the string). 
- * A zero is always written. 
+ * It takes a default string and writes a number on top of it(if ther is any number that overrides the string).
+ * A zero is always written.
  * If a nullpointer is provided, it generates a error.
- * 
+ *
  * @param baseStr const char * to a base String that gets overridden(dont provide a nullpointer)
- * 
+ *
  * @param value uint16_t value that is printet over the defaultstring
- * 
+ *
  * @param updateDots byte of dots that should be displayed (get passed through).
- * 
+ *
  */
 void sprintfToDisplay(const char *baseStr, uint16_t value, byte updateDots);
 
 /**
  * @brief display the time of a specified RtcDateTime object
- * 
+ *
  * This function provides a menu for displaying any RtcDateTime object.
  * Pressing the inc and dec button allows switching between the different steps.
  * It allows for realtime updating of the seconds.
  * This function needs the secondary state to be setup with 6 states (secondayState.reset(0, 6))
- * 
+ *
  * @param dt const RtcDateTime& that should be displayed
- * 
+ *
  */
 void displayTime(const RtcDateTime &dt);
 
 /**
  * @brief check for two switches to be held for 5 seconds
- * 
+ *
  * Takes 2 button objects as input and checks if both have been held for 5 seconds simultaneously.
  * It that happens, the functions returns true. Any time else it returns false.
  * After a true output it resets its internal timer and continues from the beginning.
- * 
+ *
  * @param button1 Button object that gets read for a true output.
- * 
+ *
  * @param button2 Button object that gets read for a true output.
- * 
+ *
  * @return bool that returns true once after the button has been held.
- * 
+ *
  */
 bool twoSwitchesHeldForTime(Button &button1, Button &button2);
 
 /**
  * @brief set the time of a specified RtcDateTime object
- * 
+ *
  * This function provides a menu to edit a RtcDateTime object.
  * Pressing inc and dec manipulates a the current value.
  * pressing set goes to the next step.
  * When the last step is completed, the function returns true anytime else, it returns false.
- * This is for saving the value somewhere (eeprom or RTC) 
- * 
+ * This is for saving the value somewhere (eeprom or RTC)
+ *
  * @param timeToEdit RtcDateTime& object that gets edited
- * 
+ *
  * @return bool true once after the last step has been completed
- * 
+ *
  */
 bool setCurrentTime(RtcDateTime &timeToEdit);
 
-// ISR
-void switchhandler(); // inputs from the switches and debounces them
-void periodicTasks(); // functions that should be called periodically are called here
+// ISR's
+
+/**
+ * @brief ISR for button events
+ *
+ * This function is called in case of any button input state change.
+ * It does not know which button had a change.
+ * It also rests the powerTimeout timer to set the CPU active again
+ *
+ */
+void switchhandler();
+
+/**
+ * @brief handles periodic calling of setbrighness and wakup for counter update
+ */
+void periodicTasks();
 
 // main state functions
-void inline mainStatemachine();          // main statemachine
-void inline resolveAndDisplayError();    // resolve and display errors
-void inline brightnessCalibrationStp1(); // display calibration step 1
-void inline brightnessCalibrationStp2(); // display calibration step 2
-void inline displayCalibrationData();    // display calibration step 3
+
+/**
+ * @brief main statemachine
+ *
+ * Contains the main statemachine. Handles the funcion calling of other funcions depending of current state.
+ *
+ */
+void inline mainStatemachine();
+
+/**
+ * @brief resolve and display errors
+ *
+ * In case of a (or multiple) error(s), this function displays each one and if possible, clears em.
+ *
+ */
+void inline resolveAndDisplayError();
+
+/**
+ * @brief display calibration step 1
+ *
+ * Actions that happen for step 1 of Sensor calibration (Sensor should be as dark as possible).
+ *
+ */
+void inline brightnessCalibrationStp1();
+
+/**
+ * @brief display calibration step 2
+ *
+ * Actions that happen for step 2 of Sensor calibration (Sensor should be as bright as possible).
+ *
+ */
+void inline brightnessCalibrationStp2();
+
+/**
+ * @brief display calibration step 2
+ *
+ * Actions that happen for displaying of the sensor calibration data and the current sensor value.
+ *
+ */
+void inline displayCalibrationData(); // display calibration step 3
 
 #if DEBUG == 1 // this function is only used for debuging
 void printDateTime(const RtcDateTime &dt);
@@ -501,6 +550,10 @@ void mainStatemachine()
       brightnessCalibrationStp1();
       mainState.nextStep(SysState_setup_calibrationStp2);
     }
+    else
+    {
+      getSensorValue(); // call function to cycle readings buffer
+    }
     mainState.nextStepConditional(SysState_menu_calibration, switchdec.trigger() || switchinc.trigger()); // go back to the menu
     break;
 
@@ -509,6 +562,10 @@ void mainStatemachine()
     {
       brightnessCalibrationStp2();
       mainState.nextStep(SysState_menu_calibration);
+    }
+    else
+    {
+      getSensorValue(); // call function to cycle readings buffer
     }
     break;
 
@@ -800,7 +857,7 @@ void switchhandler()
   if (powerTimeout.out) // when the timer ran out, the CPU should be sleeping
   {
     debugln(F("Waking up"));
-    sleep_disable();
+    disableSleep();
     powerTimeout.resetTimer();
   }
 }
@@ -929,24 +986,13 @@ void brightnessCalibrationStp1()
   brightnessoffset = -1 * getSensorValue();
   if ((brightnessoffset < -500) or (brightnessoffset > 0)) // check for realistic values
   {                                                        // unrealistic values
-
-    debug(F("sensor reads : "));
-    debugln(analogRead(aSiglight));
-    debugln(F("offset not written : unrealistiv values -> setting offset to 0"));
-
     brightnessoffset = 0;
     errorcode = B00010000;
     mainState.nextStep(SysState_fault);
   }
   else
   { // realistic values
-
     EEPROM.put(EEPROMadrOffset, brightnessoffset);
-
-    debug(F("sensor reads : "));
-    debugln(analogRead(aSiglight));
-    debug(F("Offset written : "));
-    debugln(brightnessoffset);
   }
 }
 
